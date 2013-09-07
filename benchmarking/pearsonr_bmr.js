@@ -1,10 +1,19 @@
-load('pmr.js')
+/**
+ * Demonstrate the Pearson correlation coefficient use case of a benchmarking
+ * map reduce.
+ */
+
+load('bmr.js')
 
 db = db.getSiblingDB('benchmarks')
 
 
+/**
+ * Note that the map function recieves pairs of documents that can be combined
+ * and emitted as one.
+ */
 function map(self, other) {
-    pemit(1, {
+    bemit(1, {
         sum_self    : self.value,
         sum_other   : other.value,
         sum_self_2  : self.value * self.value,
@@ -29,13 +38,19 @@ function reduce(key, values) {
 }
 
 function finalize(key, value) {
-    value.p = (value.count * value.sum_product - (value.sum_self * value.sum_other) )
-     / (Math.sqrt(value.count * value.sum_self_2 - (value.sum_self * value.sum_self))
-     * Math.sqrt(value.count * value.sum_other_2 - (value.sum_other * value.sum_other)))
+    value.r = (
+        value.count * value.sum_product - (value.sum_self * value.sum_other) )
+     / (
+    Math.sqrt(
+        value.count * value.sum_self_2 - (value.sum_self * value.sum_self))
+    * Math.sqrt(
+        value.count * value.sum_other_2 - (value.sum_other * value.sum_other))
+    )
+
     return value
 }
 
-var r = db.sin_clean.pmr(db.sin_noisy, map, reduce, {finalize : finalize})
+var r = db.sin_clean.bmr(db.sin_noisy, map, reduce, {finalize : finalize})
 
-printjson(r)
+print("Pearson R: " + r['1'].r)
 

@@ -1,0 +1,77 @@
+
+Benchmarking: comparing two or more sets of data
+
+Currently MongoDB requires that any comparisions performed between data sets be
+ done outside the database.
+
+
+The javascript files found in this directory demonstrate a particualr use case
+ for benchamrking.
+
+
+Given two data sets it is nice to be able to calculate any correlation
+ between them. Pearson's correlation coefficient is a simple alogrithm
+ for determining a linear correlation between two data sets.
+
+The file pearsonr_data.js will generate two data sets. One that is a perfect
+ sine wave, and one that is a sine wave with some random noise. the data sets
+ are placed in the 'benchmarks' database and in the collections 'sin_clean' and
+ 'sin_noisy'.
+
+The file pearsonr_simple.js shows how to calculate the correlation coefficient
+ by pulling all the data out of MongoDB. This is the most effiecient method in
+ MongoDB's current state. But once the data set becomes too large it will no
+ longer be practical to perform calculation this way.
+
+The file pearsonr_mr.js shows how to calculate the correlation coefficient
+ using map reduce. While it is possible using the existing map reduce framework
+ to caluclate the coefficient, it is not a practical solution because of the
+ overhead in creating the many intermediate collections.
+
+The file pearsonr_bmr.js shows how to calculate the correlation coefficient
+ using a proposed 'benchmarking map reduce'. This benchmarking map reduce
+ doesn't exist within MongoDB. The file bmr.js is a pure javascript
+ implementation of a proposed benchamrking map reduce framework. Since the
+ implementation is still all client side there are no performance gains but it
+ is simply a way of demonstrating a posible work flow of the proposed framework.
+
+
+In order to efficiently implement a benchmarking map reduce we need to be able
+ to have collections that share the same shard key and chunk config. See
+ SERVER-924 for more details and progress on creating "linked collections".
+
+
+Simple performance test results:
+
+$ time ../build/linux2/normal/mongo/mongo pearsonr_mr.js
+MongoDB shell version: 2.5.3-pre-
+connecting to: test
+Pearson R: 0.9797030098256609
+
+real    0m2.384s
+user    0m0.046s
+sys 0m0.012s
+
+$ time ../build/linux2/normal/mongo/mongo pearsonr_simple.js
+MongoDB shell version: 2.5.3-pre-
+connecting to: test
+Pearson R: 0.9797030098256609
+
+real    0m0.182s
+user    0m0.159s
+sys 0m0.015s
+
+
+NOTE: the bmr test doesn't make any sense at the moment becuase its
+ implementation is all client side
+
+$ time ../build/linux2/normal/mongo/mongo pearsonr_bmr.js
+MongoDB shell version: 2.5.3-pre-
+connecting to: test
+Pearson R: 0.9797030098256609
+
+real    0m0.231s
+user    0m0.205s
+sys 0m0.018s
+
+

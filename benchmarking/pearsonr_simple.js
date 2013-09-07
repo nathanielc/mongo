@@ -26,13 +26,12 @@ while (clean.hasNext()) {
     count += 1
 }
 
-print("sum_x  " +  sum_x )
-print("sum_y  " +  sum_y )
-print("sum_xx " +  sum_xx)
-print("sum_yy " +  sum_yy)
-print("sum_xy " +  sum_xy)
 
-p = (count * sum_xy - (sum_x * sum_y) ) / (Math.sqrt(count * sum_xx - (sum_x * sum_x)) * Math.sqrt(count * sum_yy - (sum_y * sum_y)))
+r = (count * sum_xy - (sum_x * sum_y) )
+    / (
+        Math.sqrt(count * sum_xx - (sum_x * sum_x)) 
+        * Math.sqrt(count * sum_yy - (sum_y * sum_y))
+    )
 
-print("Pearson R: " + p)
+print("Pearson R: " + r)
 

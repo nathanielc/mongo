@@ -2048,7 +2048,26 @@ namespace mongo {
         enum State { READY , CLONE , CATCHUP , STEADY , COMMIT_START , DONE , FAIL , ABORT } state;
         string errmsg;
 
-    } migrateStatus;
+    } migrateStatus; //ommit this?
+
+	/* the mongos
+	 * new migrateStatus class 
+	 * in charge of overseeing 
+	 * individual migrateStatus classes of each chunks 
+	 */
+
+	 class migrateStatusMaster {
+
+		// a vector of pointers
+		// that point to individual
+		// instances of migrateStatus
+		vector<*MigrateStatus> ms; 
+
+		// the overseeing state object
+		enum State { READY , CLONE , CATCHUP , STEADY , COMMIT_START , DONE , FAIL , ABORT } state;
+        string errmsg;
+
+	 } migrateStatusMaster;
 
     void migrateThread() {
         Client::initThread( "migrateThread" );

@@ -106,7 +106,7 @@ namespace mongo {
                     note( _cmdErrmsg );
                     warning() << "got error doing chunk migrate: " << _cmdErrmsg << endl;
                 }
-                    
+
                 configServer.logChange( (string)"moveChunk." + _where , _ns, _b.obj() );
             }
             catch ( const std::exception& e ) {
@@ -425,7 +425,7 @@ namespace mongo {
                 avgRecSize = 0;
                 maxRecsWhenFull = Chunk::MaxObjectPerChunk + 1;
             }
-            
+
             // do a full traversal of the chunk and don't stop even if we think it is a large chunk
             // we want the number of records to better report, in that case
             bool isLargeChunk = false;
@@ -478,10 +478,10 @@ namespace mongo {
                 allocSize = std::min(BSONObjMaxUserSize, (int)((12 + d->averageObjectSize()) * _cloneLocs.size()));
             }
             BSONArrayBuilder a (allocSize);
-            
+
             while ( 1 ) {
                 bool filledBuffer = false;
-                
+
                 auto_ptr<LockMongoFilesShared> fileLock;
                 Record* recordToTouch = 0;
 
@@ -492,16 +492,16 @@ namespace mongo {
                     for ( ; i!=_cloneLocs.end(); ++i ) {
                         if (tracker.intervalHasElapsed()) // should I yield?
                             break;
-                        
+
                         DiskLoc dl = *i;
-                        
+
                         Record* r = dl.rec();
                         if ( ! r->likelyInPhysicalMemory() ) {
                             fileLock.reset( new LockMongoFilesShared() );
                             recordToTouch = r;
                             break;
                         }
-                        
+
                         BSONObj o = dl.obj();
 
                         // use the builder size instead of accumulating 'o's size so that we take into consideration
@@ -511,16 +511,16 @@ namespace mongo {
                             filledBuffer = true; // break out of outer while loop
                             break;
                         }
-                        
+
                         a.append( o );
                     }
-                    
+
                     _cloneLocs.erase( _cloneLocs.begin() , i );
-                    
+
                     if ( _cloneLocs.empty() || filledBuffer )
                         break;
                 }
-                
+
                 if ( recordToTouch ) {
                     // its safe to touch here because we have a LockMongoFilesShared
                     // we can't do where we get the lock because we would have to unlock the main readlock and tne _trackerLocks
@@ -528,7 +528,7 @@ namespace mongo {
                     recordToTouch->touch();
                     recordToTouch = 0;
                 }
-                
+
             }
 
             result.appendArray( "objects" , a.arr() );
@@ -545,10 +545,10 @@ namespace mongo {
             if ( ! db->ownsNS( _ns ) )
                 return;
 
-            
+
             // not needed right now
             // but trying to prevent a future bug
-            scoped_spinlock lk( _trackerLocks ); 
+            scoped_spinlock lk( _trackerLocks );
 
             _cloneLocs.erase( dl );
         }
@@ -848,7 +848,7 @@ namespace mongo {
             timing.done(1);
 
             // 2.
-            
+
             if ( migrateFromStatus.isActive() ) {
                 errmsg = "migration already in progress";
                 return false;
@@ -904,6 +904,7 @@ namespace mongo {
                     verify( cursor.get() );
                     while ( cursor->more() ) {
                         BSONObj collObj = cursor->next();
+                        log() << "found " << collObj[CollectionType::ns()].String() << " linked ns" << endl;
                         linkedCols.push_back(collObj[CollectionType::ns()].String());
                     }
                 }
@@ -950,7 +951,7 @@ namespace mongo {
                     errmsg = "official version less than mine?";
                     maxVersion.addToBSON( result, "officialVersion" );
                     shardingState.getVersion( ns ).addToBSON( result, "myVersion" );
-    
+
                     warning() << "aborted moveChunk because " << errmsg << ": official " << maxVersion
                                       << " mine: " << shardingState.getVersion( ns ) << migrateLog;
                     return false;
@@ -1508,7 +1509,7 @@ namespace mongo {
 
     class MigrateStatus {
     public:
-        
+
         MigrateStatus() : m_active("MigrateStatus") { active = false; }
 
         void prepare() {
@@ -1558,7 +1559,7 @@ namespace mongo {
             verify( state == READY );
             verify( ! min.isEmpty() );
             verify( ! max.isEmpty() );
-            
+
             replSetMajorityCount = theReplSet ? theReplSet->config().getMajority() : 0;
 
             log() << "starting receiving-end of migration of chunk " << min << " -> " << max <<
@@ -1587,13 +1588,13 @@ namespace mongo {
                 }
             }
 
-            {                
+            {
                 // 1. copy indexes
-                
+
                 vector<BSONObj> all;
                 {
                     auto_ptr<DBClientCursor> indexes = conn->getIndexes( ns );
-                    
+
                     while ( indexes->more() ) {
                         all.push_back( indexes->next().getOwned() );
                     }
@@ -1740,7 +1741,7 @@ namespace mongo {
                         break;
 
                     apply( res , &lastOpApplied );
-                    
+
                     const int maxIterations = 3600*50;
                     int i;
                     for ( i=0;i<maxIterations; i++) {
@@ -1748,10 +1749,10 @@ namespace mongo {
                             timing.note( "aborted" );
                             return;
                         }
-                        
+
                         if ( opReplicatedEnough( lastOpApplied ) )
                             break;
-                        
+
                         if ( i > 100 ) {
                             warning() << "secondaries having hard time keeping up with migrate" << migrateLog;
                         }
@@ -1765,13 +1766,13 @@ namespace mongo {
                         conn.done();
                         state = FAIL;
                         return;
-                    } 
+                    }
                 }
 
                 timing.done(4);
             }
 
-            { 
+            {
                 // pause to wait for replication
                 // this will prevent us from going into critical section until we're ready
                 Timer t;
@@ -1813,7 +1814,7 @@ namespace mongo {
                         timing.note( "aborted" );
                         return;
                     }
-                    
+
                     // We know we're finished when:
                     // 1) The from side has told us that it has locked writes (COMMIT_START)
                     // 2) We've checked at least one more time for un-transmitted mods
@@ -1821,7 +1822,7 @@ namespace mongo {
                         if ( flushPendingWrites( lastOpApplied ) )
                             break;
                     }
-                    
+
                     // Only sleep if we aren't committing
                     if ( state == STEADY ) sleepmillis( 10 );
                 }
@@ -1838,29 +1839,6 @@ namespace mongo {
             conn.done();
         }
 
-        void status( BSONObjBuilder& b ) {
-            b.appendBool( "active" , getActive() );
-
-            b.append( "ns" , ns );
-            b.append( "from" , from );
-            b.append( "min" , min );
-            b.append( "max" , max );
-            b.append( "shardKeyPattern" , shardKeyPattern );
-
-            b.append( "state" , stateString() );
-            if ( state == FAIL )
-                b.append( "errmsg" , errmsg );
-            {
-                BSONObjBuilder bb( b.subobjStart( "counts" ) );
-                bb.append( "cloned" , numCloned );
-                bb.append( "clonedBytes" , clonedBytes );
-                bb.append( "catchup" , numCatchup );
-                bb.append( "steady" , numSteady );
-                bb.done();
-            }
-
-
-        }
 
         bool apply( const BSONObj& xfer , ReplTime* lastOpApplied ) {
             ReplTime dummy;
@@ -1964,8 +1942,8 @@ namespace mongo {
         bool flushPendingWrites( const ReplTime& lastOpApplied ) {
             if ( ! opReplicatedEnough( lastOpApplied ) ) {
                 OpTime op( lastOpApplied );
-                OCCASIONALLY warning() << "migrate commit waiting for " << replSetMajorityCount 
-                                       << " slaves for '" << ns << "' " << min << " -> " << max 
+                OCCASIONALLY warning() << "migrate commit waiting for " << replSetMajorityCount
+                                       << " slaves for '" << ns << "' " << min << " -> " << max
                                        << " waiting for: " << op
                                        << migrateLog;
                 return false;
@@ -1985,26 +1963,12 @@ namespace mongo {
             return true;
         }
 
-        string stateString() {
-            switch ( state ) {
-            case READY: return "ready";
-            case CLONE: return "clone";
-            case CATCHUP: return "catchup";
-            case STEADY: return "steady";
-            case COMMIT_START: return "commitStart";
-            case DONE: return "done";
-            case FAIL: return "fail";
-            case ABORT: return "abort";
-            }
-            verify(0);
-            return "";
-        }
 
         bool startCommit() {
             if ( state != STEADY )
                 return false;
             state = COMMIT_START;
-            
+
             Timer t;
             // we wait for the commit to succeed before giving up
             while ( t.seconds() <= 30 ) {
@@ -2029,13 +1993,6 @@ namespace mongo {
         mutable mongo::mutex m_active;
         bool active;
 
-        string ns;
-        string from;
-
-        BSONObj min;
-        BSONObj max;
-        BSONObj shardKeyPattern;
-        OID epoch;
 
         long long numCloned;
         long long clonedBytes;
@@ -2050,13 +2007,121 @@ namespace mongo {
 
     } migrateStatus;
 
-    void migrateThread() {
+    /* the mongos
+    * new migrateStatus class
+    * in charge of overseeing
+    * individual migrateStatus classes of each chunks
+    */
+    class MigrateStatusMaster {
+    public:
+        MigrateStatusMaster() : m_active("MigrateStatusMaster"), activeId() { }
+        ~MigrateStatusMaster() {
+            cleanUp();
+        }
+
+        void cleanUp() {
+            vector<MigrateStatus*>::iterator status;
+            for (status = ms.begin(); status != ms.end(); ++status) {
+                delete *status;
+            }
+            ms.clear()
+        }
+
+        string stateString() {
+            State minState = DONE;
+            vector<MigrateStatus*>::const_iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                if ( status->state < minState )
+                    minState = status->state;
+            }
+            switch ( minState ) {
+            case READY: return "ready";
+            case CLONE: return "clone";
+            case CATCHUP: return "catchup";
+            case STEADY: return "steady";
+            case COMMIT_START: return "commitStart";
+            case DONE: return "done";
+            case FAIL: return "fail";
+            case ABORT: return "abort";
+            }
+            verify(0);
+            return "";
+        }
+
+        void status( BSONObjBuilder& b ) {
+            b.appendBool( "active" , isActive() );
+
+            b.append( "ns" , ns );
+            b.append( "from" , from );
+            b.append( "min" , min );
+            b.append( "max" , max );
+            b.append( "shardKeyPattern" , shardKeyPattern );
+
+            b.append( "state" , stateString() );
+            if ( state == FAIL )
+                b.append( "errmsg" , errmsg );
+            {
+                BSONObjBuilder bb( b.subobjStart( "counts" ) );
+                bb.append( "cloned" , numCloned );
+                bb.append( "clonedBytes" , clonedBytes );
+                bb.append( "catchup" , numCatchup );
+                bb.append( "steady" , numSteady );
+                bb.done();
+            }
+        }
+
+        void startCommit() {
+            vector<MigrateStatus*>::iterator status;
+            for (status = ms.begin(); status != ms.end(); ++status) {
+                status->startCommit();
+            }
+        }
+
+        void abort() {
+            vector<MigrateStatus*>::iterator status;
+            for (status = ms.begin(); status != ms.end(); ++status) {
+                status->abort();
+            }
+        }
+
+        bool getActive(const OID& migrateId) const { scoped_lock l(m_active); return activeId == migrateId; }
+        bool isActive() const { scoped_lock l(m_active); return activeId.isSet(); }
+        void setActive( const OID& migrateOId ) { scoped_lock l(m_active); activeId = migrateId; }
+
+
+        string ns;
+        string from;
+
+        BSONObj min;
+        BSONObj max;
+        BSONObj shardKeyPattern;
+        OID epoch;
+
+        MigrateStatus* prepareNewMigration() {
+            MigrateStatus* status = new MigrateStatus();
+            ms.push_back(status);
+            return status;
+        }
+
+    private:
+        // a vector of pointers
+        // that point to individual
+        // instances of migrateStatus
+        // Owned here
+        vector<MigrateStatus*> ms;
+
+        mutable mongo::mutex m_active;
+        OID activeId;
+
+    } migrateStatusMaster;
+
+    void migrateThread(MigrateStatus* status) {
         Client::initThread( "migrateThread" );
         if (AuthorizationManager::isAuthEnabled()) {
             ShardedConnectionInfo::addHook();
             cc().getAuthorizationSession()->grantInternalAuthorization();
         }
-        migrateStatus.go();
+        status.go();
         cc().shutdown();
     }
 
@@ -2073,10 +2138,12 @@ namespace mongo {
             out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
         }
         bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+            log() << "Starting _recvChunkStart" << endl;
 
+            OID migrateId = cmdObj["migrateId"].OID();
             // Active state of TO-side migrations (MigrateStatus) is serialized by distributed
             // collection lock.
-            if ( migrateStatus.getActive() ) {
+            if ( migrateStatusMaster.getActive(migrateId) ) {
                 errmsg = "migrate already in progress";
                 return false;
             }
@@ -2115,20 +2182,20 @@ namespace mongo {
                 return false;
             }
 
-            migrateStatus.ns = ns;
-            migrateStatus.from = cmdObj["from"].String();
-            migrateStatus.min = min;
-            migrateStatus.max = max;
-            migrateStatus.epoch = currentVersion.epoch();
-            migrateStatus.secondaryThrottle = cmdObj["secondaryThrottle"].trueValue();
+            migrateStatusMaster.ns = ns;
+            migrateStatusMaster.from = cmdObj["from"].String();
+            migrateStatusMaster.min = min;
+            migrateStatusMaster.max = max;
+            migrateStatusMaster.epoch = currentVersion.epoch();
+            migrateStatusMaster.secondaryThrottle = cmdObj["secondaryThrottle"].trueValue();
             if (cmdObj.hasField("shardKeyPattern")) {
-                migrateStatus.shardKeyPattern = cmdObj["shardKeyPattern"].Obj().getOwned();
+                migrateStatusMaster.shardKeyPattern = cmdObj["shardKeyPattern"].Obj().getOwned();
             } else {
                 // shardKeyPattern may not be provided if another shard is from pre 2.2
                 // In that case, assume the shard key pattern is the same as the range
                 // specifiers provided.
-                BSONObj keya = Helpers::inferKeyPattern( migrateStatus.min );
-                BSONObj keyb = Helpers::inferKeyPattern( migrateStatus.max );
+                BSONObj keya = Helpers::inferKeyPattern( migrateStatusMaster.min );
+                BSONObj keyb = Helpers::inferKeyPattern( migrateStatusMaster.max );
                 verify( keya == keyb );
 
                 warning() << "No shard key pattern provided by source shard for migration."
@@ -2136,18 +2203,18 @@ namespace mongo {
                     " Falling back to assuming the shard key matches the pattern of the min and max"
                     " chunk range specifiers.  Inferred shard key: " << keya << endl;
 
-                migrateStatus.shardKeyPattern = keya.getOwned();
+                migrateStatusMaster.shardKeyPattern = keya.getOwned();
             }
 
-            if ( migrateStatus.secondaryThrottle && ! anyReplEnabled() ) {
-                warning() << "secondaryThrottle asked for, but not replication" << endl;
-                migrateStatus.secondaryThrottle = false;
+            if ( migrateStatusMaster.secondaryThrottle && ! anyReplEnabled() ) {
+                warning() << "MastersecondaryThrottle asked for, but not replication" << endl;
+                migrateStatusMaster.secondaryThrottle = false;
             }
 
             // Set the TO-side migration to active
-            migrateStatus.prepare();
+            MigrateStatus* status = migrateStatusMaster.prepareNewMigration();
 
-            boost::thread m( migrateThread );
+            boost::thread m( migrateThread,  status);
 
             result.appendBool( "started" , true );
             return true;
@@ -2166,7 +2233,7 @@ namespace mongo {
             out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
         }
         bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-            migrateStatus.status( result );
+            migrateStatusMaster.status( result );
             return 1;
         }
 
@@ -2183,8 +2250,8 @@ namespace mongo {
             out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
         }
         bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-            bool ok = migrateStatus.startCommit();
-            migrateStatus.status( result );
+            bool ok = migrateStatusMaster.startCommit();
+            migrateStatusMaster.status( result );
             return ok;
         }
 
@@ -2201,8 +2268,8 @@ namespace mongo {
             out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
         }
         bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-            migrateStatus.abort();
-            migrateStatus.status( result );
+            migrateStatusMaster.abort();
+            migrateStatusMaster.status( result );
             return true;
         }
 

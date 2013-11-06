@@ -406,7 +406,7 @@ namespace mongo {
 
                 return true;
             }
-        };
+        } linkCollectionsCmd;
 
         // ------------ collection level commands -------------
 

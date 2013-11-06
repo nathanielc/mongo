@@ -397,7 +397,7 @@ namespace mongo {
                 out->push_back(Privilege(AuthorizationManager::CLUSTER_RESOURCE_NAME, actions));
             }
 
-        } 
+        };
 
         // ------------ collection level commands -------------
 

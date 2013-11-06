@@ -62,7 +62,7 @@ namespace mongo {
     DBConfig::CollectionInfo::CollectionInfo( const BSONObj& in ) {
         _dirty = false;
         _dropped = in[CollectionType::dropped()].trueValue();
-		_linked = in[CollectionType::linked()].isABSONObj();
+        _linked = in[CollectionType::linked()].isABSONObj();
 
         if ( in[CollectionType::keyPattern()].isABSONObj() ) {
             shard( new ChunkManager( in ) );
@@ -70,8 +70,8 @@ namespace mongo {
 
         _dirty = false;
     }
-    
-	
+
+
     void DBConfig::CollectionInfo::shard( ChunkManager* manager ){
 
         // Do this *first* so we're invisible to everyone else
@@ -96,6 +96,12 @@ namespace mongo {
         }
     }
 
+    void DBConfig::CollectionInfo::unshard() {
+        _cm.reset();
+        _dropped = true;
+        _dirty = true;
+        _key = BSONObj();
+    }
 
     void DBConfig::CollectionInfo::save( const string& ns , DBClientBase* conn ) {
         BSONObj key = BSON( "_id" << ns );
@@ -104,7 +110,7 @@ namespace mongo {
         val.append(CollectionType::ns(), ns);
         val.appendDate(CollectionType::DEPRECATED_lastmod(), time(0));
         val.appendBool(CollectionType::dropped(), _dropped);
-		val.append(CollectionType::linked(), _linked);
+        val.append(CollectionType::linked(), _linked);
 
         if ( _cm )
             _cm->getInfo( val );
@@ -155,7 +161,7 @@ namespace mongo {
     void DBConfig::enableSharding( bool save ) {
         if ( _shardingEnabled )
             return;
-        
+
         verify( _name != "config" );
 
         scoped_lock lk( _lock );
@@ -166,30 +172,32 @@ namespace mongo {
     /**
      *
      */
-	bool linkManagerPtr DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
-		uassert( 17115 , "db doesn't have sharding enabled" , _shardingEnabled );
-		
-        
+    bool DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
+        uassert( 17115 , "db doesn't have sharding enabled" , _shardingEnabled );
+
+
         {
             scoped_lock lk( _lock );
 
-            CollectionInfo& ci = _collections[collection1];
-            uassert( 17116  , "collection1 already sharded" , ! ci.isSharded() );
-			CollectionInfo& ci = _collections[collection2];
-			uassert( 17117 , "collection2 already sharded" , ! ci.isSharded() );
+            CollectionInfo& ci0 = _collections[collection1];
+            uassert( 17116  , "collection1 already sharded" , ! ci0.isSharded() );
+            CollectionInfo& ci1 = _collections[collection2];
+            uassert( 17117 , "collection2 already sharded" , ! ci1.isSharded() );
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 
             _save();
 
         }
-										
+        return true;
+    }
+
     ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {
         uassert( 8042 , "db doesn't have sharding enabled" , _shardingEnabled );
         uassert( 13648 , str::stream() << "can't shard collection because not all config servers are up" , configServer.allUp() );
 
         ChunkManagerPtr manager;
-        
+
         {
             scoped_lock lk( _lock );
 
@@ -321,7 +329,7 @@ namespace mongo {
 
         {
             scoped_lock lk( _lock );
-            
+
             bool earlyReload = ! _collections[ns].isSharded() && ( shouldReload || forceReload );
             if ( earlyReload ) {
                 // this is to catch cases where there this is a new sharded collection
@@ -331,7 +339,7 @@ namespace mongo {
             CollectionInfo& ci = _collections[ns];
             uassert( 10181 ,  (string)"not sharded:" + ns , ci.isSharded() );
             verify( ! ci.key().isEmpty() );
-            
+
             if ( ! ( shouldReload || forceReload ) || earlyReload )
                 return ci.getCM();
 
@@ -341,9 +349,9 @@ namespace mongo {
                 oldVersion = ci.getCM()->getVersion();
             }
         }
-        
+
         verify( ! key.isEmpty() );
-        
+
         // TODO: We need to keep this first one-chunk check in until we have a more efficient way of
         // creating/reusing a chunk manager, as doing so requires copying the full set of chunks currently
 
@@ -354,7 +362,7 @@ namespace mongo {
                                    Query(BSON(ChunkType::ns(ns))).sort(
                                            ChunkType::DEPRECATED_lastmod(), -1));
             conn.done();
-            
+
             if ( ! newest.isEmpty() ) {
                 ChunkVersion v = ChunkVersion::fromBSON(newest, ChunkType::DEPRECATED_lastmod());
                 if ( v.isEquivalentTo( oldVersion ) ) {
@@ -372,16 +380,16 @@ namespace mongo {
         }
 
         // we are not locked now, and want to load a new ChunkManager
-        
+
         auto_ptr<ChunkManager> temp;
 
         {
             scoped_lock lll ( _hitConfigServerLock );
-            
+
             if ( ! newest.isEmpty() && ! forceReload ) {
                 // if we have a target we're going for
                 // see if we've hit already
-                
+
                 scoped_lock lk( _lock );
                 CollectionInfo& ci = _collections[ns];
                 if ( ci.isSharded() && ci.getCM() ) {
@@ -397,9 +405,9 @@ namespace mongo {
                         return ci.getCM();
                     }
                 }
-                
+
             }
-            
+
             temp.reset( new ChunkManager( oldManager ) );
             temp->loadExistingRanges( configServer.getPrimary().getConnString() );
 
@@ -411,13 +419,13 @@ namespace mongo {
         }
 
         scoped_lock lk( _lock );
-        
+
         CollectionInfo& ci = _collections[ns];
         uassert( 14822 ,  (string)"state changed in the middle: " + ns , ci.isSharded() );
 
         // Reset if our versions aren't the same
         bool shouldReset = ! temp->getVersion().isEquivalentTo( ci.getCM()->getVersion() );
-        
+
         // Also reset if we're forced to do so
         if( ! shouldReset && forceReload ){
             shouldReset = true;
@@ -444,7 +452,7 @@ namespace mongo {
         if ( shouldReset ){
             ci.resetCM( temp.release() );
         }
-        
+
         uassert( 15883 , str::stream() << "not sharded after chunk manager reset : " << ns , ci.isSharded() );
         return ci.getCM();
     }
@@ -848,7 +856,7 @@ namespace mongo {
                     error = result["errmsg"].eoo() ? "" : result["errmsg"].String();
                     if (!result["assertion"].eoo()) error = result["assertion"].String();
 
-                    warning() << "couldn't check dbhash on config server " << _config[i] 
+                    warning() << "couldn't check dbhash on config server " << _config[i]
                               << causedBy(result.toString()) << endl;
 
                     result = BSONObj();
@@ -981,13 +989,13 @@ namespace mongo {
         set<string> got;
 
         ScopedDbConnection conn(_primary.getConnString(), 30.0);
-        
+
         try {
-            
+
             auto_ptr<DBClientCursor> c = conn->query( SettingsType::ConfigNS , BSONObj() );
             verify( c.get() );
             while ( c->more() ) {
-                
+
                 BSONObj o = c->next();
                 string name = o[SettingsType::key()].valuestrsafe();
                 got.insert( name );

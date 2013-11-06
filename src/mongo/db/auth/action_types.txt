@@ -102,6 +102,7 @@
 "_recvChunkAbort",
 "_recvChunkCommit",
 "_recvChunkStart",
+"_recvChunkStartOne",
 "_recvChunkStatus",
 "_transferMods"]
 

@@ -92,6 +92,7 @@ namespace mongo {
             ChunkManagerPtr _cm;
             bool _dirty;
             bool _dropped;
+            string _linked;
         };
 
         typedef map<string,CollectionInfo> Collections;

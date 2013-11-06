@@ -994,144 +994,184 @@ namespace mongo {
             timing.done(2);
 
 
-            //Repeat steps 3 and 4 for each linked collection
+            // 3.
+            // First tell TO-side we are moving a chunk
+            // Then tell it to start moving each chunk for all the linked collections
             map<string, CollectionMetadataPtr> meta;
             map<string, BSONObj> shardKeyPatterns;
-            for (linkedCol = linkedCols.begin(); linkedCol != linkedCols.end(); ++linkedCol) {
-                // 3.
-                string linkedColNS = *linkedCol;
+            OID migrateId = OID::gen();
+            CollectionMetadataPtr collMetadata = shardingState.getCollectionMetadata( linkedNS );
+            verify( collMetadata != NULL );
+            meta[linkedNS] = collMetadata;
+            BSONObj shardKeyPattern = collMetadata->getKeyPattern();
+            shardKeyPatterns[linkedNS] = shardKeyPattern;
+            if ( shardKeyPattern.isEmpty() ){
+                errmsg = "no shard key found";
+                return false;
+            }
 
-                CollectionMetadataPtr collMetadata = shardingState.getCollectionMetadata( linkedColNS );
-                verify( collMetadata != NULL );
-                meta[linkedColNS] = collMetadata;
-                BSONObj shardKeyPattern = collMetadata->getKeyPattern();
-                shardKeyPatterns[linkedColNS] = shardKeyPattern;
-                if ( shardKeyPattern.isEmpty() ){
-                    errmsg = "no shard key found";
+            MigrateStatusHolder statusHolder( linkedNS , min , max , shardKeyPattern );
+            if (statusHolder.isAnotherMigrationActive()) {
+                errmsg = "moveChunk is already in progress from this shard";
+                return false;
+            }
+
+            {
+                // this gets a read lock, so we know we have a checkpoint for mods
+                if ( ! migrateFromStatus.storeCurrentLocs( maxChunkSize , errmsg , result ) )
                     return false;
-                }
 
-                MigrateStatusHolder statusHolder( linkedColNS , min , max , shardKeyPattern );
-                if (statusHolder.isAnotherMigrationActive()) {
-                    errmsg = "moveChunk is already in progress from this shard";
-                    return false;
-                }
-
-                {
-                    // this gets a read lock, so we know we have a checkpoint for mods
-                    if ( ! migrateFromStatus.storeCurrentLocs( maxChunkSize , errmsg , result ) )
-                        return false;
-
-                    ScopedDbConnection connTo(toShard.getConnString());
-                    BSONObj res;
-                    bool ok;
-                    try{
-                        ok = connTo->runCommand( "admin" ,
-                                                 BSON( "_recvChunkStart" << linkedColNS <<
-                                                       "from" << fromShard.getConnString() <<
-                                                       "min" << min <<
-                                                       "max" << max <<
-                                                       "shardKeyPattern" << shardKeyPattern <<
-                                                       "configServer" << configServer.modelServer() <<
-                                                       "secondaryThrottle" << secondaryThrottle
-                                                 ) ,
-                                                 res );
-                    }
-                    catch( DBException& e ){
-                        errmsg = str::stream() << "moveChunk could not contact to: shard "
-                                               << to << " to start transfer" << causedBy( e );
-                        warning() << errmsg << endl;
-                        return false;
-                    }
-
-                    connTo.done();
-
-                    if ( ! ok ) {
-                        errmsg = "moveChunk failed to engage TO-shard in the data transfer: ";
-                        verify( res["errmsg"].type() );
-                        errmsg += res["errmsg"].String();
-                        result.append( "cause" , res );
-                        warning() << errmsg << endl;
-                        return false;
-                    }
-
-                }
-                timing.done( 3 );
-
-                // 4.
-
-                // Track last result from TO shard for sanity check
+                ScopedDbConnection connTo(toShard.getConnString());
                 BSONObj res;
-                for ( int i=0; i<86400; i++ ) { // don't want a single chunk move to take more than a day
-                    verify( !Lock::isLocked() );
-                    // Exponential sleep backoff, up to 1024ms. Don't sleep much on the first few
-                    // iterations, since we want empty chunk migrations to be fast.
-                    sleepmillis( 1 << std::min( i , 10 ) );
-                    ScopedDbConnection conn(toShard.getConnString());
-                    bool ok;
-                    res = BSONObj();
-                    try {
-                        ok = conn->runCommand( "admin" , BSON( "_recvChunkStatus" << 1 ) , res );
-                        res = res.getOwned();
-                    }
-                    catch( DBException& e ){
-                        errmsg = str::stream() << "moveChunk could not contact to: shard " << to << " to monitor transfer" << causedBy( e );
-                        warning() << errmsg << endl;
-                        return false;
-                    }
-
-                    conn.done();
-
-                    if ( res["ns"].str() != linkedColNS ||
-                            res["from"].str() != fromShard.getConnString() ||
-                            !res["min"].isABSONObj() ||
-                            res["min"].Obj().woCompare(min) != 0 ||
-                            !res["max"].isABSONObj() ||
-                            res["max"].Obj().woCompare(max) != 0 ) {
-                        // This can happen when the destination aborted the migration and
-                        // received another recvChunk before this thread sees the transition
-                        // to the abort state. This is currently possible only if multiple migrations
-                        // are happening at once. This is an unfortunate consequence of the shards not
-                        // being able to keep track of multiple incoming and outgoing migrations.
-                        errmsg = str::stream() << "Destination shard aborted migration, "
-                                "now running a new one: " << res;
-                        warning() << errmsg << endl;
-                        return false;
-                    }
-
-                    LOG(0) << "moveChunk data transfer progress: " << res << " my mem used: " << migrateFromStatus.mbUsed() << migrateLog;
-
-                    if ( ! ok || res["state"].String() == "fail" ) {
-                        warning() << "moveChunk error transferring data caused migration abort: " << res << migrateLog;
-                        errmsg = "data transfer error";
-                        result.append( "cause" , res );
-                        return false;
-                    }
-
-                    if ( res["state"].String() == "steady" )
-                        break;
-
-                    if ( migrateFromStatus.mbUsed() > (500 * 1024 * 1024) ) {
-                        // this is too much memory for us to use for this
-                        // so we're going to abort the migrate
-                        ScopedDbConnection conn(toShard.getConnString());
-
-                        BSONObj res;
-                        if (!conn->runCommand( "admin", BSON( "_recvChunkAbort" << 1 ), res )) {
-                            warning() << "Error encountered while trying to abort migration on "
-                                      << "destination shard" << toShard.getConnString() << endl;
-                        }
-
-                        res = res.getOwned();
-                        conn.done();
-                        error() << "aborting migrate because too much memory used res: " << res << migrateLog;
-                        errmsg = "aborting migrate because too much memory used";
-                        result.appendBool( "split" , true );
-                        return false;
-                    }
-
-                    killCurrentOp.checkForInterrupt();
+                bool ok;
+                try{
+                    ok = connTo->runCommand( "admin" ,
+                                             BSON( "_recvChunkStart" << linkedNS <<
+                                                   "from" << fromShard.getConnString() <<
+                                                   "min" << min <<
+                                                   "max" << max <<
+                                                   "shardKeyPattern" << shardKeyPattern <<
+                                                   "configServer" << configServer.modelServer() <<
+                                                   "secondaryThrottle" << secondaryThrottle <<
+                                                   "migrateId" << migrateId
+                                             ),
+                                             res );
                 }
+                catch( DBException& e ){
+                    errmsg = str::stream() << "moveChunk could not contact to: shard "
+                                           << to << " to start transfer" << causedBy( e );
+                    warning() << errmsg << endl;
+                    return false;
+                }
+
+                connTo.done();
+
+                if ( ! ok ) {
+                    errmsg = "moveChunk failed to engage TO-shard in the data transfer: ";
+                    verify( res["errmsg"].type() );
+                    errmsg += res["errmsg"].String();
+                    result.append( "cause" , res );
+                    warning() << errmsg << endl;
+                    return false;
+                }
+
+            }
+            for (linkedCol = linkedCols.begin(); linkedCol != linkedCols.end(); ++linkedCol) {
+                string linkedColNS = *linkedCol;
+                // this gets a read lock, so we know we have a checkpoint for mods
+                if ( ! migrateFromStatus.storeCurrentLocs( maxChunkSize , errmsg , result ) )
+                    return false;
+
+                ScopedDbConnection connTo(toShard.getConnString());
+                BSONObj res;
+                bool ok;
+                try{
+                    ok = connTo->runCommand( "admin" ,
+                                             BSON( "_recvChunkStartOne" << linkedColNS <<
+                                                   "migrateId" << migrateId
+                                             ),
+                                             res );
+                }
+                catch( DBException& e ){
+                    errmsg = str::stream() << "moveChunk could not contact to: shard "
+                                           << to << " to start transfer of " << linkedColNS << causedBy( e );
+                    warning() << errmsg << endl;
+                    return false;
+                }
+
+                connTo.done();
+
+                if ( ! ok ) {
+                    errmsg = "moveChunk failed to engage TO-shard in the data transfer: ";
+                    verify( res["errmsg"].type() );
+                    errmsg += res["errmsg"].String();
+                    result.append( "cause" , res );
+                    warning() << errmsg << endl;
+                    return false;
+                }
+
+            }
+            timing.done( 3 );
+
+            // 4.
+
+            // Track last result from TO shard for sanity check
+            BSONObj res;
+            for ( int i=0; i<86400; i++ ) { // don't want a single chunk move to take more than a day
+                verify( !Lock::isLocked() );
+                // Exponential sleep backoff, up to 1024ms. Don't sleep much on the first few
+                // iterations, since we want empty chunk migrations to be fast.
+                sleepmillis( 1 << std::min( i , 10 ) );
+                ScopedDbConnection conn(toShard.getConnString());
+                bool ok;
+                res = BSONObj();
+                try {
+                    ok = conn->runCommand( "admin" ,
+                                            BSON(
+                                                "_recvChunkStatus" << 1 <<
+                                                "migrateId" << migrateId
+                                            ),
+                                            res );
+                    log() << "Status:" << res << endl;
+                    res = res.getOwned();
+                }
+                catch( DBException& e ){
+                    errmsg = str::stream() << "moveChunk could not contact to: shard " << to << " to monitor transfer" << causedBy( e );
+                    warning() << errmsg << endl;
+                    return false;
+                }
+
+                conn.done();
+
+                if ( res["ns"].str() != ns ||
+                        res["from"].str() != fromShard.getConnString() ||
+                        !res["min"].isABSONObj() ||
+                        res["min"].Obj().woCompare(min) != 0 ||
+                        !res["max"].isABSONObj() ||
+                        res["max"].Obj().woCompare(max) != 0 ) {
+                    // This can happen when the destination aborted the migration and
+                    // received another recvChunk before this thread sees the transition
+                    // to the abort state. This is currently possible only if multiple migrations
+                    // are happening at once. This is an unfortunate consequence of the shards not
+                    // being able to keep track of multiple incoming and outgoing migrations.
+                    errmsg = str::stream() << "Destination shard aborted migration, "
+                            "now running a new one: " << res;
+                    warning() << errmsg << endl;
+                    return false;
+                }
+
+                LOG(0) << "moveChunk data transfer progress: " << res << " my mem used: " << migrateFromStatus.mbUsed() << migrateLog;
+
+                if ( ! ok || res["state"].String() == "fail" ) {
+                    warning() << "moveChunk error transferring data caused migration abort: " << res << migrateLog;
+                    errmsg = "data transfer error";
+                    result.append( "cause" , res );
+                    return false;
+                }
+
+                if ( res["state"].String() == "steady" )
+                    break;
+
+                if ( migrateFromStatus.mbUsed() > (500 * 1024 * 1024) ) {
+                    // this is too much memory for us to use for this
+                    // so we're going to abort the migrate
+                    ScopedDbConnection conn(toShard.getConnString());
+
+                    BSONObj res;
+                    if (!conn->runCommand( "admin", BSON( "_recvChunkAbort" << 1 ), res )) {
+                        warning() << "Error encountered while trying to abort migration on "
+                                  << "destination shard" << toShard.getConnString() << endl;
+                    }
+
+                    res = res.getOwned();
+                    conn.done();
+                    error() << "aborting migrate because too much memory used res: " << res << migrateLog;
+                    errmsg = "aborting migrate because too much memory used";
+                    result.appendBool( "split" , true );
+                    return false;
+                }
+
+                killCurrentOp.checkForInterrupt();
             }
             timing.done(4);
 
@@ -1172,69 +1212,66 @@ namespace mongo {
             {
                 //Keep last version
                 ChunkVersion lastVersion;
-                for (linkedCol = linkedCols.begin(); linkedCol != linkedCols.end(); ++linkedCol) {
-                    // 5.a
-                    // we're under the collection lock here, so no other migrate can change maxVersion
-                    // or CollectionMetadata state
-                    string linkedColNS = *linkedCol;
-                    migrateFromStatus.setInCriticalSection( true );
-                    ChunkVersion myVersion = maxVersion;
-                    myVersion.incMajor();
+                // 5.a
+                // we're under the collection lock here, so no other migrate can change maxVersion
+                // or CollectionMetadata state
+                migrateFromStatus.setInCriticalSection( true );
+                ChunkVersion myVersion = maxVersion;
+                myVersion.incMajor();
 
+                {
+                    Lock::DBWrite lk( linkedNS );
+                    verify( myVersion > shardingState.getVersion( linkedNS ) );
+
+                    // bump the metadata's version up and "forget" about the chunk being moved
+                    // this is not the commit point but in practice the state in this shard won't
+                    // until the commit it done
+                    shardingState.donateChunk( linkedNS , min , max , myVersion );
+                }
+
+                log() << "moveChunk setting version to: " << myVersion << migrateLog;
+
+                // 5.b
+                // we're under the collection lock here, too, so we can undo the chunk donation because no other state change
+                // could be ongoing
+
+                BSONObj res;
+                bool ok;
+
+                try {
+                    ScopedDbConnection connTo( toShard.getConnString(), 35.0 );
+                    ok = connTo->runCommand( "admin", BSON( "_recvChunkCommit" << 1 ), res );
+                    connTo.done();
+                }
+                catch ( DBException& e ) {
+                    errmsg = str::stream() << "moveChunk could not contact to: shard "
+                                           << toShard.getConnString() << " to commit transfer"
+                                           << causedBy( e );
+                    warning() << errmsg << endl;
+                    ok = false;
+                }
+
+                if ( !ok ) {
+                    log() << "moveChunk migrate commit not accepted by TO-shard: " << res
+                          << " resetting shard version to: " << startingVersion << migrateLog;
                     {
-                        Lock::DBWrite lk( linkedColNS );
-                        verify( myVersion > shardingState.getVersion( linkedColNS ) );
-
-                        // bump the metadata's version up and "forget" about the chunk being moved
-                        // this is not the commit point but in practice the state in this shard won't
-                        // until the commit it done
-                        shardingState.donateChunk( linkedColNS , min , max , myVersion );
-                    }
-
-                    log() << "moveChunk setting version to: " << myVersion << migrateLog;
-
-                    // 5.b
-                    // we're under the collection lock here, too, so we can undo the chunk donation because no other state change
-                    // could be ongoing
-
-                    BSONObj res;
-                    bool ok;
-
-                    try {
-                        ScopedDbConnection connTo( toShard.getConnString(), 35.0 );
-                        ok = connTo->runCommand( "admin", BSON( "_recvChunkCommit" << 1 ), res );
-                        connTo.done();
-                    }
-                    catch ( DBException& e ) {
-                        errmsg = str::stream() << "moveChunk could not contact to: shard "
-                                               << toShard.getConnString() << " to commit transfer"
-                                               << causedBy( e );
-                        warning() << errmsg << endl;
-                        ok = false;
-                    }
-
-                    if ( !ok ) {
-                        log() << "moveChunk migrate commit not accepted by TO-shard: " << res
-                              << " resetting shard version to: " << startingVersion << migrateLog;
-                        {
-                            Lock::GlobalWrite lk;
-                            log() << "moveChunk global lock acquired to reset shard version from "
-                                  "failed migration"
-                                  << endl;
-
-                            // revert the chunk manager back to the state before "forgetting" about the
-                            // chunk
-                            shardingState.undoDonateChunk( linkedColNS, meta[linkedColNS]);
-                        }
-                        log() << "Shard version successfully reset to clean up failed migration"
+                        Lock::GlobalWrite lk;
+                        log() << "moveChunk global lock acquired to reset shard version from "
+                              "failed migration"
                               << endl;
 
-                        errmsg = "_recvChunkCommit failed!";
-                        result.append( "cause", res );
-                        return false;
+                        // revert the chunk manager back to the state before "forgetting" about the
+                        // chunk
+                        shardingState.undoDonateChunk( linkedNS, meta[linkedNS]);
                     }
-                    lastVersion = myVersion;
+                    log() << "Shard version successfully reset to clean up failed migration"
+                          << endl;
+
+                    errmsg = "_recvChunkCommit failed!";
+                    result.append( "cause", res );
+                    return false;
                 }
+                lastVersion = myVersion;
                 log() << "moveChunk migrate commit accepted by TO-shard: " << migrateLog;
 
                 // 5.c
@@ -1347,7 +1384,7 @@ namespace mongo {
                 LOG(7) << "moveChunk update: " << cmd << migrateLog;
 
                 int exceptionCode = OkCode;
-                bool ok = false;
+                ok = false;
                 BSONObj cmdResult;
                 try {
                     ScopedDbConnection conn(shardingState.getConfigServer(), 10.0);
@@ -2074,7 +2111,7 @@ namespace mongo {
         void status( BSONObjBuilder& b ) {
             b.appendBool( "active" , isActive() );
 
-            b.append( "ns" , ns );
+            b.append( "ns" , linkedNS );
             b.append( "from" , from );
             b.append( "min" , min );
             b.append( "max" , max );
@@ -2126,7 +2163,7 @@ namespace mongo {
         void setActive( const OID& migrateId ) { scoped_lock l(m_active); activeId = migrateId; }
 
 
-        string ns;
+        string linkedNS;
         string from;
 
         BSONObj min;
@@ -2135,7 +2172,7 @@ namespace mongo {
         OID epoch;
         bool secondaryThrottle;
 
-        MigrateStatus* prepareNewMigration() {
+        MigrateStatus* prepareNewMigration(const string& ns) {
             MigrateStatus* status = new MigrateStatus(
                 ns,
                 from,
@@ -2186,6 +2223,7 @@ namespace mongo {
             log() << "Starting _recvChunkStart" << endl;
 
             OID migrateId = cmdObj["migrateId"].OID();
+            log() << "migrateId " << migrateId << endl;
             // Active state of TO-side migrations (MigrateStatus) is serialized by distributed
             // collection lock.
             if ( migrateStatusMaster.getActive(migrateId) ) {
@@ -2227,7 +2265,7 @@ namespace mongo {
                 return false;
             }
 
-            migrateStatusMaster.ns = ns;
+            migrateStatusMaster.linkedNS = ns;
             migrateStatusMaster.from = cmdObj["from"].String();
             migrateStatusMaster.min = min;
             migrateStatusMaster.max = max;
@@ -2257,7 +2295,40 @@ namespace mongo {
             }
 
             // Set the TO-side migration to active
-            MigrateStatus* migrateStatus = migrateStatusMaster.prepareNewMigration();
+            migrateStatusMaster.setActive(migrateId);
+
+            result.appendBool( "started" , true );
+            return true;
+        }
+
+    } recvChunkStartCmd;
+
+    class RecvChunkStartOneCommand : public ChunkCommandHelper {
+    public:
+        RecvChunkStartOneCommand() : ChunkCommandHelper( "_recvChunkStartOne" ) {}
+
+        virtual LockType locktype() const { return NONE; }
+        virtual void addRequiredPrivileges(const std::string& dbname,
+                                           const BSONObj& cmdObj,
+                                           std::vector<Privilege>* out) {
+            ActionSet actions;
+            actions.addAction(ActionType::_recvChunkStartOne);
+            out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
+        }
+        bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+            log() << "Starting _recvChunkStartOne" << endl;
+
+            const string ns = cmdObj.firstElement().String();
+            OID migrateId = cmdObj["migrateId"].OID();
+            log() << "migrateId " << migrateId << endl;
+            // Active state of TO-side migrations (MigrateStatus) is serialized by distributed
+            // collection lock.
+            if ( migrateStatusMaster.getActive(migrateId) ) {
+                errmsg = "migrate already in progress";
+                return false;
+            }
+            // Start thread to migrate chunk
+            MigrateStatus* migrateStatus = migrateStatusMaster.prepareNewMigration(ns);
 
             boost::thread m( migrateThread,  migrateStatus);
 
@@ -2265,7 +2336,7 @@ namespace mongo {
             return true;
         }
 
-    } recvChunkStartCmd;
+    } recvChunkStartOneCmd;
 
     class RecvChunkStatusCommand : public ChunkCommandHelper {
     public:

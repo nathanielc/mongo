@@ -1510,7 +1510,23 @@ namespace mongo {
     class MigrateStatus {
     public:
 
-        MigrateStatus() : m_active("MigrateStatus") { active = false; }
+        MigrateStatus(
+                const string& _ns,
+                const string& _from,
+                const BSONObj& _min,
+                const BSONObj& _max,
+                const BSONObj& _shardKeyPattern,
+                const OID& _epoch
+            ) :
+                m_active("MigrateStatus"),
+                active(false),
+                ns(_ns),
+                from(_from),
+                min(_min),
+                max(_max),
+                shardKeyPattern(_shardKeyPattern),
+                epoch(_epoch)
+            { }
 
         void prepare() {
             scoped_lock l(m_active); // reading and writing 'active'
@@ -1993,6 +2009,13 @@ namespace mongo {
         mutable mongo::mutex m_active;
         bool active;
 
+        const string& ns;
+        const string& from;
+
+        const BSONObj& min;
+        const BSONObj& max;
+        const BSONObj& shardKeyPattern;
+        const OID& epoch;
 
         long long numCloned;
         long long clonedBytes;
@@ -2005,7 +2028,7 @@ namespace mongo {
         enum State { READY , CLONE , CATCHUP , STEADY , COMMIT_START , DONE , FAIL , ABORT } state;
         string errmsg;
 
-    } migrateStatus; //ommit this?
+    };
 
     /* the mongos
     * new migrateStatus class
@@ -2024,25 +2047,25 @@ namespace mongo {
             for (status = ms.begin(); status != ms.end(); ++status) {
                 delete *status;
             }
-            ms.clear()
+            ms.clear();
         }
 
         string stateString() {
-            State minState = DONE;
+            MigrateStatus::State minState = MigrateStatus::DONE;
             vector<MigrateStatus*>::const_iterator status;
             for ( status = ms.begin(); status != ms.end(); ++status ) {
-                if ( status->state < minState )
-                    minState = status->state;
+                if ( (*status)->state < minState )
+                    minState = (*status)->state;
             }
             switch ( minState ) {
-            case READY: return "ready";
-            case CLONE: return "clone";
-            case CATCHUP: return "catchup";
-            case STEADY: return "steady";
-            case COMMIT_START: return "commitStart";
-            case DONE: return "done";
-            case FAIL: return "fail";
-            case ABORT: return "abort";
+            case MigrateStatus::READY: return "ready";
+            case MigrateStatus::CLONE: return "clone";
+            case MigrateStatus::CATCHUP: return "catchup";
+            case MigrateStatus::STEADY: return "steady";
+            case MigrateStatus::COMMIT_START: return "commitStart";
+            case MigrateStatus::DONE: return "done";
+            case MigrateStatus::FAIL: return "fail";
+            case MigrateStatus::ABORT: return "abort";
             }
             verify(0);
             return "";
@@ -2058,9 +2081,21 @@ namespace mongo {
             b.append( "shardKeyPattern" , shardKeyPattern );
 
             b.append( "state" , stateString() );
-            if ( state == FAIL )
-                b.append( "errmsg" , errmsg );
+            //if ( state == FAIL )
+            //    b.append( "errmsg" , errmsg );
             {
+                long long numCloned = 0;
+                long long clonedBytes = 0;
+                long long numCatchup = 0;
+                long long numSteady = 0;
+                vector<MigrateStatus*>::const_iterator status;
+                for ( status = ms.begin(); status != ms.end(); ++status ) {
+                    MigrateStatus* s = *status;
+                    numCloned += s->numCloned;
+                    clonedBytes += s->clonedBytes;
+                    numCatchup += s->numCatchup;
+                    numSteady += s->numSteady;
+                }
                 BSONObjBuilder bb( b.subobjStart( "counts" ) );
                 bb.append( "cloned" , numCloned );
                 bb.append( "clonedBytes" , clonedBytes );
@@ -2070,23 +2105,25 @@ namespace mongo {
             }
         }
 
-        void startCommit() {
+        bool startCommit() {
+            bool success = true;
             vector<MigrateStatus*>::iterator status;
             for (status = ms.begin(); status != ms.end(); ++status) {
-                status->startCommit();
+                success &= (*status)->startCommit();
             }
+            return success;
         }
 
         void abort() {
             vector<MigrateStatus*>::iterator status;
             for (status = ms.begin(); status != ms.end(); ++status) {
-                status->abort();
+                (*status)->abort();
             }
         }
 
         bool getActive(const OID& migrateId) const { scoped_lock l(m_active); return activeId == migrateId; }
         bool isActive() const { scoped_lock l(m_active); return activeId.isSet(); }
-        void setActive( const OID& migrateOId ) { scoped_lock l(m_active); activeId = migrateId; }
+        void setActive( const OID& migrateId ) { scoped_lock l(m_active); activeId = migrateId; }
 
 
         string ns;
@@ -2096,9 +2133,17 @@ namespace mongo {
         BSONObj max;
         BSONObj shardKeyPattern;
         OID epoch;
+        bool secondaryThrottle;
 
         MigrateStatus* prepareNewMigration() {
-            MigrateStatus* status = new MigrateStatus();
+            MigrateStatus* status = new MigrateStatus(
+                ns,
+                from,
+                min,
+                max,
+                shardKeyPattern,
+                epoch
+            );
             ms.push_back(status);
             return status;
         }
@@ -2121,7 +2166,7 @@ namespace mongo {
             ShardedConnectionInfo::addHook();
             cc().getAuthorizationSession()->grantInternalAuthorization();
         }
-        status.go();
+        status->go();
         cc().shutdown();
     }
 
@@ -2212,9 +2257,9 @@ namespace mongo {
             }
 
             // Set the TO-side migration to active
-            MigrateStatus* status = migrateStatusMaster.prepareNewMigration();
+            MigrateStatus* migrateStatus = migrateStatusMaster.prepareNewMigration();
 
-            boost::thread m( migrateThread,  status);
+            boost::thread m( migrateThread,  migrateStatus);
 
             result.appendBool( "started" , true );
             return true;

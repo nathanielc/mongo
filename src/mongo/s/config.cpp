@@ -191,9 +191,9 @@ namespace mongo {
             scoped_lock lk( _lock );
 
             CollectionInfo& ci1 = _collections[collection1];
-            uassert( 17116  , "collection1 already sharded" , ! ci1.isSharded() );
+            uassert( 17116  , "collection1 not sharded" , ci1.isSharded() );
             CollectionInfo& ci2 = _collections[collection2];
-            uassert( 17117 , "collection2 already sharded" , ! ci2.isSharded() );
+            uassert( 17117 , "collection2 not sharded" , ci2.isSharded() );
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 

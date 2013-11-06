@@ -56,11 +56,15 @@ namespace mongo {
     class DBConfig  {
 
         struct CollectionInfo {
+<<<<<<< HEAD
             CollectionInfo() {
                 _dirty = false;
                 _dropped = false;
 				_linked = ""; 
             }
+=======
+            CollectionInfo()  : _dirty(false), _dropped(false), _linked() { }
+>>>>>>> 1f4bd9fbf4d81afeb479c3b6de25f2bbf605ae5b
 
             CollectionInfo( const BSONObj& in );
 
@@ -83,11 +87,11 @@ namespace mongo {
 
             bool isDirty() const { return _dirty; }
             bool wasDropped() const { return _dropped; }
-            
+
             void save( const string& ns , DBClientBase* conn );
-            
+
             bool unique() const { return _unqiue; }
-            BSONObj key() const { return _key; } 
+            BSONObj key() const { return _key; }
 
 
         private:
@@ -138,9 +142,15 @@ namespace mongo {
                                          vector<BSONObj>* initPoints = 0,
                                          vector<Shard>* initShards = 0 );
 
+<<<<<<< HEAD
 		/* LinkeConnections manager */
 		bool linkCollections( const string& collection1, const string& collection2 );
 										  
+=======
+        /* LinkeConnections manager */
+        bool linkCollections( const string& collection1, const string& collection2 );
+
+>>>>>>> 1f4bd9fbf4d81afeb479c3b6de25f2bbf605ae5b
         /**
            @return true if there was sharding info to remove
          */

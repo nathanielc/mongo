@@ -137,8 +137,8 @@ namespace mongo {
                                          vector<Shard>* initShards = 0 );
 
 		/* LinkeConnections manager */
-		linkManagerPtr linkCollections( const string& collection1,
-										const string& collection2 );
+		bool linkManagerPtr linkCollections( const string& collection1, const string& collection2 );
+										  
         /**
            @return true if there was sharding info to remove
          */

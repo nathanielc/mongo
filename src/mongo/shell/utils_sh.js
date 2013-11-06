@@ -89,12 +89,12 @@ sh.shardCollection = function( fullName , key , unique ) {
 }
 
 sh.linkCollections = function( fullName1 , fullName2 ) {
-    sh._checkFullName1( fullName1 )
-	sh._checkFullName2( fullName2 )
+    sh._checkFullName( fullName1 )
+	sh._checkFullName( fullName2 )
 	assert( fullName1 , "missing one or both collections" )
 	assert( fullName2 , "missing one or both collections" )
     
-    var cmd = { Collection1 : fullName1 , Collection2 : fullName2 }
+    var cmd = { collection1 : fullName1 , collection2 : fullName2 , linkedCollection : true }
 
     return sh._adminCommand( cmd );
 }

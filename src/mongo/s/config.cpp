@@ -95,27 +95,7 @@ namespace mongo {
             unshard();
         }
     }
-	 void DBConfig::CollectionInfo::link( LinkManager* manager ){
 
-        // Do this *first* so we're invisible to everyone else
-        manager->loadExistingRanges( configServer.getPrimary().getConnString() );
-
-        //
-        // Collections with no chunks are unsharded, no matter what the collections entry says
-        // This helps prevent errors when dropping in a different process
-        //
-
-            _lm = LinkManagerPtr( manager );
-            _linked = BSONObj;
-   
-    }
-
-    void DBConfig::CollectionInfo::unshard() {
-        _cm.reset();
-        _dropped = true;
-        _dirty = true;
-        _key = BSONObj();
-    }
 
     void DBConfig::CollectionInfo::save( const string& ns , DBClientBase* conn ) {
         BSONObj key = BSON( "_id" << ns );
@@ -186,10 +166,9 @@ namespace mongo {
     /**
      *
      */
-	linkManagerPtr DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
+	bool linkManagerPtr DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
 		uassert( 17115 , "db doesn't have sharding enabled" , _shardingEnabled );
 		
-		linkManagerPtr manager;
         
         {
             scoped_lock lk( _lock );
@@ -201,16 +180,8 @@ namespace mongo {
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 
-            linkManager* lm = new linkManager( collection1, collection2 );
-            lm->linkBothCollections( collection1, collection2);
-
-            ci.link( lm );
-
             _save();
 
-            // Save the initial chunk manager for later, no need to reload if we're in this lock
-            manager = ci.getLM();
-            verify( manager.get() );
         }
 										
     ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {

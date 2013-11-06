@@ -40,7 +40,7 @@ namespace mongo {
     const BSONField<std::string> CollectionType::primary("primary");
     const BSONField<BSONObj> CollectionType::keyPattern("key");
     const BSONField<bool> CollectionType::unique("unique");
-	const BSONField<BSONObj> CollectionType::linked("linked");
+	const BSONField<std::string> CollectionType::linked("linked");
     const BSONField<Date_t> CollectionType::updatedAt("updatedAt");
     const BSONField<bool> CollectionType::noBalance("noBalance");
     const BSONField<OID> CollectionType::epoch("epoch");

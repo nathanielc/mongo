@@ -62,6 +62,7 @@ namespace mongo {
     DBConfig::CollectionInfo::CollectionInfo( const BSONObj& in ) {
         _dirty = false;
         _dropped = in[CollectionType::dropped()].trueValue();
+		_linked = in[CollectionType::linked()].isABSONObj();
 
         if ( in[CollectionType::keyPattern()].isABSONObj() ) {
             shard( new ChunkManager( in ) );
@@ -70,6 +71,7 @@ namespace mongo {
         _dirty = false;
     }
     
+	
     void DBConfig::CollectionInfo::shard( ChunkManager* manager ){
 
         // Do this *first* so we're invisible to everyone else
@@ -94,12 +96,6 @@ namespace mongo {
         }
     }
 
-    void DBConfig::CollectionInfo::unshard() {
-        _cm.reset();
-        _dropped = true;
-        _dirty = true;
-        _key = BSONObj();
-    }
 
     void DBConfig::CollectionInfo::save( const string& ns , DBClientBase* conn ) {
         BSONObj key = BSON( "_id" << ns );
@@ -108,6 +104,8 @@ namespace mongo {
         val.append(CollectionType::ns(), ns);
         val.appendDate(CollectionType::DEPRECATED_lastmod(), time(0));
         val.appendBool(CollectionType::dropped(), _dropped);
+		val.append(CollectionType::linked(), _linked);
+
         if ( _cm )
             _cm->getInfo( val );
 
@@ -168,6 +166,24 @@ namespace mongo {
     /**
      *
      */
+	bool linkManagerPtr DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
+		uassert( 17115 , "db doesn't have sharding enabled" , _shardingEnabled );
+		
+        
+        {
+            scoped_lock lk( _lock );
+
+            CollectionInfo& ci = _collections[collection1];
+            uassert( 17116  , "collection1 already sharded" , ! ci.isSharded() );
+			CollectionInfo& ci = _collections[collection2];
+			uassert( 17117 , "collection2 already sharded" , ! ci.isSharded() );
+
+            log() << "link collections: " << collection1 << "and" << collection2  << endl;
+
+            _save();
+
+        }
+										
     ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {
         uassert( 8042 , "db doesn't have sharding enabled" , _shardingEnabled );
         uassert( 13648 , str::stream() << "can't shard collection because not all config servers are up" , configServer.allUp() );

@@ -136,6 +136,9 @@ namespace mongo {
                                          vector<BSONObj>* initPoints = 0,
                                          vector<Shard>* initShards = 0 );
 
+		/* LinkeConnections manager */
+		bool linkManagerPtr linkCollections( const string& collection1, const string& collection2 );
+										  
         /**
            @return true if there was sharding info to remove
          */

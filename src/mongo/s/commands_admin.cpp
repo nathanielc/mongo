@@ -378,6 +378,27 @@ namespace mongo {
             }
         } enableShardingCmd;
 
+		//-------------link collections-------------------
+
+		class LinkCollectionsCmd : public GridAdminCmd {
+        public:
+            LinkCollectionsCmd() : GridAdminCmd( "linkCollections" ) {}
+
+            virtual void help( stringstream& help ) const {
+                help
+                        << "link two collections.  The two collections must already be sharded.\n"
+                        << "  { enablesharding : \"<dbname>\" }\n";
+            }
+            virtual void addRequiredPrivileges(const std::string& dbname,
+                                               const BSONObj& cmdObj,
+                                               std::vector<Privilege>* out) {
+                ActionSet actions;
+                actions.addAction(ActionType::linkCollections);
+                out->push_back(Privilege(AuthorizationManager::CLUSTER_RESOURCE_NAME, actions));
+            }
+
+        } 
+
         // ------------ collection level commands -------------
 
         class ShardCollectionCmd : public GridAdminCmd {

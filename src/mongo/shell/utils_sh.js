@@ -7,8 +7,18 @@ sh._checkMongos = function() {
 }
 
 sh._checkFullName = function( fullName ) {
-    assert( fullName , "neeed a full name" )
+    assert( fullName , "need a full name" )
     assert( fullName.indexOf( "." ) > 0 , "name needs to be fully qualified <db>.<collection>'" )
+}
+
+sh._checkFullName1 = function( fullName1 ) {
+    assert( fullName1 , "need a full name" )
+    assert( fullName1.indexOf( "." ) > 0 , "name needs to be fully qualified <db>.<collection>'" )
+}
+
+sh._checkFullName2 = function( fullName2 ) {
+    assert( fullName2 , "need a full name" )
+    assert( fullName2.indexOf( "." ) > 0 , "name needs to be fully qualified <db>.<collection>'" )
 }
 
 sh._adminCommand = function( cmd , skipCheck ) {
@@ -35,6 +45,7 @@ sh.help = function() {
     print( "\tsh.addShard( host )                       server:port OR setname/server:port" )
     print( "\tsh.enableSharding(dbname)                 enables sharding on the database dbname" )
     print( "\tsh.shardCollection(fullName,key,unique)   shards the collection" );
+	print( "\tsh.linkCollections(fullName1, fullName2)  link sharded collections");
 
     print( "\tsh.splitFind(fullName,find)               splits the chunk that find is in at the median" );
     print( "\tsh.splitAt(fullName,middle)               splits the chunk that middle is in at middle" );
@@ -76,6 +87,18 @@ sh.shardCollection = function( fullName , key , unique ) {
 
     return sh._adminCommand( cmd );
 }
+
+sh.linkCollections = function( fullName1 , fullName2 ) {
+    sh._checkFullName( fullName1 )
+	sh._checkFullName( fullName2 )
+	assert( fullName1 , "missing one or both collections" )
+	assert( fullName2 , "missing one or both collections" )
+    
+    var cmd = { collection1 : fullName1 , collection2 : fullName2 , linkedCollection : true }
+
+    return sh._adminCommand( cmd );
+}
+
 
 sh.splitFind = function( fullName , find ) {
     sh._checkFullName( fullName )

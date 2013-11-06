@@ -62,7 +62,7 @@ namespace mongo {
     DBConfig::CollectionInfo::CollectionInfo( const BSONObj& in ) {
         _dirty = false;
         _dropped = in[CollectionType::dropped()].trueValue();
-        _linked = in[CollectionType::linked()].isABSONObj();
+        _linked = in[CollectionType::linked()].String();
 
         if ( in[CollectionType::keyPattern()].isABSONObj() ) {
             shard( new ChunkManager( in ) );
@@ -101,7 +101,18 @@ namespace mongo {
         _dropped = true;
         _dirty = true;
         _key = BSONObj();
+        _linked = "";
     }
+
+   void DBConfig::CollectionInfo::link(CollectionInfo& other, string collection1){
+            if ( _linked.empty() ){
+                _dirty = true;
+                _linked = collection1;
+            }
+            other._dirty = true;
+            other._linked = _linked;
+   }
+
 
     void DBConfig::CollectionInfo::save( const string& ns , DBClientBase* conn ) {
         BSONObj key = BSON( "_id" << ns );
@@ -179,15 +190,16 @@ namespace mongo {
         {
             scoped_lock lk( _lock );
 
-            CollectionInfo& ci0 = _collections[collection1];
-            uassert( 17116  , "collection1 already sharded" , ! ci0.isSharded() );
-            CollectionInfo& ci1 = _collections[collection2];
-            uassert( 17117 , "collection2 already sharded" , ! ci1.isSharded() );
+            CollectionInfo& ci1 = _collections[collection1];
+            uassert( 17116  , "collection1 already sharded" , ! ci1.isSharded() );
+            CollectionInfo& ci2 = _collections[collection2];
+            uassert( 17117 , "collection2 already sharded" , ! ci2.isSharded() );
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 
-            _save();
+            ci1.link(ci2, collection1);
 
+            _save(false, true);
         }
         return true;
     }

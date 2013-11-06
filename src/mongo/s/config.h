@@ -56,7 +56,9 @@ namespace mongo {
     class DBConfig  {
 
         struct CollectionInfo {
+
             CollectionInfo()  : _dirty(false), _dropped(false), _linked() { }
+
 
             CollectionInfo( const BSONObj& in );
 
@@ -76,6 +78,8 @@ namespace mongo {
 
             void shard( ChunkManager* cm );
             void unshard();
+
+			void link(CollectionInfo& other, string collection1);
 
             bool isDirty() const { return _dirty; }
             bool wasDropped() const { return _dropped; }
@@ -134,9 +138,10 @@ namespace mongo {
                                          vector<BSONObj>* initPoints = 0,
                                          vector<Shard>* initShards = 0 );
 
-        /* LinkeConnections manager */
-        bool linkCollections( const string& collection1, const string& collection2 );
 
+		/* LinkeConnections manager */
+		bool linkCollections( const string& collection1, const string& collection2 );
+										  
         /**
            @return true if there was sharding info to remove
          */

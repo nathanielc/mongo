@@ -240,14 +240,14 @@ namespace mongo {
                     dlk = dist_lock_try( &lockSetup , string("Moving primary shard of ") + dbname );
                 }
                 catch( LockException& e ){
-	                errmsg = str::stream() << "error locking distributed lock to move primary shard of " << dbname << causedBy( e );
-	                warning() << errmsg << endl;
-	                return false;
+                    errmsg = str::stream() << "error locking distributed lock to move primary shard of " << dbname << causedBy( e );
+                    warning() << errmsg << endl;
+                    return false;
                 }
 
                 if ( ! dlk.got() ) {
-	                errmsg = (string)"metadata lock is already taken for moving " + dbname;
-	                return false;
+                    errmsg = (string)"metadata lock is already taken for moving " + dbname;
+                    return false;
                 }
 
                 set<string> shardedColls;
@@ -351,7 +351,7 @@ namespace mongo {
                     errmsg = "no db";
                     return false;
                 }
-                
+
                 if ( dbname == "admin" ) {
                     errmsg = "can't shard the admin db";
                     return false;
@@ -366,10 +366,10 @@ namespace mongo {
                     errmsg = "already enabled";
                     return false;
                 }
-                
+
                 if ( ! okForConfigChanges( errmsg ) )
                     return false;
-                
+
                 log() << "enabling sharding on: " << dbname << endl;
 
                 config->enableSharding();
@@ -378,9 +378,9 @@ namespace mongo {
             }
         } enableShardingCmd;
 
-		//-------------link collections-------------------
+        //-------------link collections-------------------
 
-		class LinkCollectionsCmd : public GridAdminCmd {
+        class LinkCollectionsCmd : public GridAdminCmd {
         public:
             LinkCollectionsCmd() : GridAdminCmd( "linkCollections" ) {}
 
@@ -397,6 +397,15 @@ namespace mongo {
                 out->push_back(Privilege(AuthorizationManager::CLUSTER_RESOURCE_NAME, actions));
             }
 
+            bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+                const string collection1 = cmdObj["collection1"].String();
+                const string collection2 = cmdObj["collection2"].String();
+
+                DBConfigPtr config = grid.getDBConfig( collection1 );
+                config->linkCollections(collection1, collection2);
+
+                return true;
+            }
         };
 
         // ------------ collection level commands -------------
@@ -1054,7 +1063,7 @@ namespace mongo {
                     result.append( "cause" , res );
                     return false;
                 }
-                
+
                 // preemptively reload the config to get new version info
                 config->getChunkManager( ns , true );
 
@@ -1123,11 +1132,11 @@ namespace mongo {
                 vector<HostAndPort> serverAddrs = servers.getServers();
                 for ( size_t i = 0 ; i < serverAddrs.size() ; i++ ) {
                     if ( serverAddrs[i].isLocalHost() != grid.allowLocalHost() ) {
-                        errmsg = str::stream() << 
+                        errmsg = str::stream() <<
                             "can't use localhost as a shard since all shards need to communicate. " <<
-                            "either use all shards and configdbs in localhost or all in actual IPs " << 
+                            "either use all shards and configdbs in localhost or all in actual IPs " <<
                             " host: " << serverAddrs[i].toString() << " isLocalHost:" << serverAddrs[i].isLocalHost();
-                        
+
                         log() << "addshard request " << cmdObj << " failed: attempt to mix localhosts and IPs" << endl;
                         return false;
                     }
@@ -1540,7 +1549,7 @@ namespace mongo {
 
                 bb.append( temp.obj() );
             }
-            
+
             { // get config db from the config servers (first one)
                 ScopedDbConnection conn(configServer.getPrimary().getConnString(), 30);
                 BSONObj x;

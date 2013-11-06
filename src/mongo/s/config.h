@@ -59,6 +59,7 @@ namespace mongo {
             CollectionInfo() {
                 _dirty = false;
                 _dropped = false;
+				_linked = ""; 
             }
 
             CollectionInfo( const BSONObj& in );
@@ -95,6 +96,7 @@ namespace mongo {
             ChunkManagerPtr _cm;
             bool _dirty;
             bool _dropped;
+			string _linked;
         };
 
         typedef map<string,CollectionInfo> Collections;
@@ -137,7 +139,7 @@ namespace mongo {
                                          vector<Shard>* initShards = 0 );
 
 		/* LinkeConnections manager */
-		bool linkManagerPtr linkCollections( const string& collection1, const string& collection2 );
+		bool linkCollections( const string& collection1, const string& collection2 );
 										  
         /**
            @return true if there was sharding info to remove

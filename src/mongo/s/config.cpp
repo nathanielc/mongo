@@ -62,7 +62,7 @@ namespace mongo {
     DBConfig::CollectionInfo::CollectionInfo( const BSONObj& in ) {
         _dirty = false;
         _dropped = in[CollectionType::dropped()].trueValue();
-		_linked = in[CollectionType::linked()].isABSONObj();
+		_linked = in[CollectionType::linked()].isAString();
 
         if ( in[CollectionType::keyPattern()].isABSONObj() ) {
             shard( new ChunkManager( in ) );
@@ -166,17 +166,17 @@ namespace mongo {
     /**
      *
      */
-	bool linkManagerPtr DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
+	bool DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
 		uassert( 17115 , "db doesn't have sharding enabled" , _shardingEnabled );
 		
         
         {
             scoped_lock lk( _lock );
 
-            CollectionInfo& ci = _collections[collection1];
-            uassert( 17116  , "collection1 already sharded" , ! ci.isSharded() );
-			CollectionInfo& ci = _collections[collection2];
-			uassert( 17117 , "collection2 already sharded" , ! ci.isSharded() );
+            CollectionInfo& ci1 = _collections[collection1];
+            uassert( 17116  , "collection1 already sharded" , ! ci1.isSharded() );
+			CollectionInfo& ci2 = _collections[collection2];
+			uassert( 17117 , "collection2 already sharded" , ! ci2.isSharded() );
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 

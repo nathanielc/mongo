@@ -396,8 +396,15 @@ namespace mongo {
                 actions.addAction(ActionType::linkCollections);
                 out->push_back(Privilege(AuthorizationManager::CLUSTER_RESOURCE_NAME, actions));
             }
+            bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
+				const string collection1 = cmdObj["collection1"].String();
+				const string collection2 = cmdObj["collection2"].String();
 
-        } 
+				DBConfigPtr config = grid.getDBConfig( collection1 );
+				config->linkCollections(collection1, collection2);
+               
+			}
+        }; 
 
         // ------------ collection level commands -------------
 

@@ -62,7 +62,7 @@ namespace mongo {
     DBConfig::CollectionInfo::CollectionInfo( const BSONObj& in ) {
         _dirty = false;
         _dropped = in[CollectionType::dropped()].trueValue();
-		_linked = in[CollectionType::linked()].isAString();
+		_linked = in[CollectionType::linked()].String();
 
         if ( in[CollectionType::keyPattern()].isABSONObj() ) {
             shard( new ChunkManager( in ) );
@@ -95,6 +95,23 @@ namespace mongo {
             unshard();
         }
     }
+
+   void DBConfig::CollectionInfo::unshard() {
+        _cm.reset();
+        _dropped = true;
+        _dirty = true;
+        _key = BSONObj();
+		_linked = "";
+    }
+
+   void DBConfig::CollectionInfo::link(CollectionInfo& other, string collection1){
+        	if ( _linked.empty() ){
+				_dirty = true;
+			    _linked = collection1;
+			}
+			other._dirty = true;
+			other._linked = _linked;
+   }
 
 
     void DBConfig::CollectionInfo::save( const string& ns , DBClientBase* conn ) {
@@ -180,10 +197,12 @@ namespace mongo {
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 
-            _save();
+            ci1.link(ci2, collection1);
 
-        }
-										
+            _save(false, true);
+		}
+		return true;
+	}										
     ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {
         uassert( 8042 , "db doesn't have sharding enabled" , _shardingEnabled );
         uassert( 13648 , str::stream() << "can't shard collection because not all config servers are up" , configServer.allUp() );

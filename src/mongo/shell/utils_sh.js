@@ -94,7 +94,7 @@ sh.linkCollections = function( fullName1 , fullName2 ) {
 	assert( fullName1 , "missing one or both collections" )
 	assert( fullName2 , "missing one or both collections" )
     
-    var cmd = { collection1 : fullName1 , collection2 : fullName2 , linkedCollection : true }
+    var cmd = { linkCollections : true, collection1 : fullName1 , collection2 : fullName2 }
 
     return sh._adminCommand( cmd );
 }

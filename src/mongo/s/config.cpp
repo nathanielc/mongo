@@ -62,6 +62,7 @@ namespace mongo {
     DBConfig::CollectionInfo::CollectionInfo( const BSONObj& in ) {
         _dirty = false;
         _dropped = in[CollectionType::dropped()].trueValue();
+		_linked = in[CollectionType::linked()].isABSONObj();
 
         if ( in[CollectionType::keyPattern()].isABSONObj() ) {
             shard( new ChunkManager( in ) );
@@ -70,6 +71,7 @@ namespace mongo {
         _dirty = false;
     }
     
+	
     void DBConfig::CollectionInfo::shard( ChunkManager* manager ){
 
         // Do this *first* so we're invisible to everyone else
@@ -93,6 +95,20 @@ namespace mongo {
             unshard();
         }
     }
+	 void DBConfig::CollectionInfo::link( LinkManager* manager ){
+
+        // Do this *first* so we're invisible to everyone else
+        manager->loadExistingRanges( configServer.getPrimary().getConnString() );
+
+        //
+        // Collections with no chunks are unsharded, no matter what the collections entry says
+        // This helps prevent errors when dropping in a different process
+        //
+
+            _lm = LinkManagerPtr( manager );
+            _linked = BSONObj;
+   
+    }
 
     void DBConfig::CollectionInfo::unshard() {
         _cm.reset();
@@ -108,6 +124,8 @@ namespace mongo {
         val.append(CollectionType::ns(), ns);
         val.appendDate(CollectionType::DEPRECATED_lastmod(), time(0));
         val.appendBool(CollectionType::dropped(), _dropped);
+		val.append(CollectionType::linked(), _linked);
+
         if ( _cm )
             _cm->getInfo( val );
 
@@ -168,6 +186,33 @@ namespace mongo {
     /**
      *
      */
+	linkManagerPtr DBConfig::linkCollections( const string& collection1, const string& collection2 ) {
+		uassert( 17115 , "db doesn't have sharding enabled" , _shardingEnabled );
+		
+		linkManagerPtr manager;
+        
+        {
+            scoped_lock lk( _lock );
+
+            CollectionInfo& ci = _collections[collection1];
+            uassert( 17116  , "collection1 already sharded" , ! ci.isSharded() );
+			CollectionInfo& ci = _collections[collection2];
+			uassert( 17117 , "collection2 already sharded" , ! ci.isSharded() );
+
+            log() << "link collections: " << collection1 << "and" << collection2  << endl;
+
+            linkManager* lm = new linkManager( collection1, collection2 );
+            lm->linkBothCollections( collection1, collection2);
+
+            ci.link( lm );
+
+            _save();
+
+            // Save the initial chunk manager for later, no need to reload if we're in this lock
+            manager = ci.getLM();
+            verify( manager.get() );
+        }
+										
     ChunkManagerPtr DBConfig::shardCollection( const string& ns , ShardKeyPattern fieldsAndOrder , bool unique , vector<BSONObj>* initPoints, vector<Shard>* initShards ) {
         uassert( 8042 , "db doesn't have sharding enabled" , _shardingEnabled );
         uassert( 13648 , str::stream() << "can't shard collection because not all config servers are up" , configServer.allUp() );

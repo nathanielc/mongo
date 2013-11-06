@@ -73,6 +73,7 @@ namespace mongo {
         static const BSONField<std::string> primary;
         static const BSONField<BSONObj> keyPattern;
         static const BSONField<bool> unique;
+		static const BSONField<std::string> linked;
         static const BSONField<Date_t> updatedAt;
         static const BSONField<bool> noBalance;
         static const BSONField<OID> epoch;

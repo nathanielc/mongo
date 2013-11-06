@@ -49,6 +49,7 @@
 "insert",
 "killCursors",
 "killop",
+"linkCollections",
 "listDatabases",
 "listShards",
 "logRotate",

@@ -257,7 +257,7 @@ namespace mongo {
         }
 
         void logOp(const char* opstr,
-                   const char* ns,
+                   const string& ns,
                    const BSONObj& obj,
                    BSONObj* patt,
                    bool notInActiveChunk) {
@@ -621,18 +621,147 @@ namespace mongo {
         bool _getActive() const { scoped_lock l(_mutex); return _active; }
         void _setActive( bool b ) { scoped_lock l(_mutex); _active = b; }
 
-    } migrateFromStatus;
+    };
+
+
+    class MigrateFromStatusMaster {
+    public:
+
+        MigrateFromStatusMaster() : _mutex("MigrateFromStatusMaster") {
+            _active = false;
+            _inCriticalSection = false;
+        }
+
+        bool start( const vector<string>& linkedCols ,
+                    const BSONObj& min ,
+                    const BSONObj& max ,
+                    const BSONObj& shardKeyPattern ) {
+            bool success = true;
+            vector<string>::const_iterator linkedColNS;
+            for ( linkedColNS = linkedCols.begin(); linkedColNS != linkedCols.end(); ++linkedColNS ) {
+                MigrateFromStatus* status = new MigrateFromStatus();
+                ms[*linkedColNS] = status;
+                success &= status->start(*linkedColNS, min, max, shardKeyPattern);
+            }
+            {
+                scoped_lock l(_mutex);
+                _active = true;
+            }
+            return success;
+        }
+
+        bool transferMods( const string& ns,  string& errmsg , BSONObjBuilder& result ) {
+            return ms[ns]->transferMods(errmsg, result);
+        }
+
+        bool clone( const string& ns, string& errmsg , BSONObjBuilder& result ) {
+            return ms[ns]->clone(errmsg, result);
+        }
+
+        void done() {
+            map<string, MigrateFromStatus*>::iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                status->second->done();
+            }
+        }
+
+        bool storeCurrentLocs( long long maxChunkSize , string& errmsg , BSONObjBuilder& result ) {
+            bool success = true;
+            map<string, MigrateFromStatus*>::iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                success &= status->second->storeCurrentLocs( maxChunkSize, errmsg, result );
+            }
+            return success;
+        }
+
+        std::size_t cloneLocsRemaining() {
+            std::size_t rem = 0;
+            map<string, MigrateFromStatus*>::iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                rem += status->second->cloneLocsRemaining();
+            }
+            return rem;
+        }
+
+        long long mbUsed() const {
+            long long used = 0;
+            map<string, MigrateFromStatus*>::const_iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                used += status->second->mbUsed();
+            }
+            return used;
+        }
+
+
+        void setInCriticalSection( bool b ) {
+            scoped_lock l(_mutex);
+            _inCriticalSection = b;
+            map<string, MigrateFromStatus*>::iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                status->second->setInCriticalSection( b );
+            }
+        }
+
+        bool getInCriticalSection() const {
+            scoped_lock l(_mutex);
+            bool crit = _inCriticalSection;
+            map<string, MigrateFromStatus*>::const_iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                crit |= status->second->getInCriticalSection();
+            }
+            return crit;
+        }
+
+
+        bool waitTillNotInCriticalSection( int maxSecondsToWait ) {
+            bool success = true;
+            map<string, MigrateFromStatus*>::const_iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                success &= status->second->waitTillNotInCriticalSection( maxSecondsToWait );
+            }
+            return success;
+        }
+
+        void logOp( const char * opstr,
+                    const string& ns,
+                    const BSONObj& obj,
+                    BSONObj * patt,
+                    bool notInActiveChunk) {
+            log() << "logOp" << endl;
+            ms[ns]->logOp(opstr, ns, obj, patt, notInActiveChunk);
+        }
+
+        void aboutToDelete( const string& ns,
+                            const Database* db,
+                            const DiskLoc& dl ) {
+            log() << "aboutToDelete" << endl;
+            ms[ns]->aboutToDelete( db, dl );
+        }
+
+        bool isActive() const { return _getActive(); }
+
+    private:
+        mutable mongo::mutex _mutex; // protect _inCriticalSection and _active
+
+        bool _inCriticalSection;
+        bool _active;
+
+        map<string, MigrateFromStatus*> ms;
+
+        bool _getActive() const { scoped_lock l(_mutex); return _active; }
+
+    } migrateFromStatusMaster;
 
     struct MigrateStatusHolder {
-        MigrateStatusHolder( const std::string& ns ,
+        MigrateStatusHolder( const vector<string>& linkedCols ,
                              const BSONObj& min ,
                              const BSONObj& max ,
                              const BSONObj& shardKeyPattern ) {
-            _isAnotherMigrationActive = !migrateFromStatus.start(ns, min, max, shardKeyPattern);
+            _isAnotherMigrationActive = !migrateFromStatusMaster.start(linkedCols, min, max, shardKeyPattern);
         }
         ~MigrateStatusHolder() {
             if (!_isAnotherMigrationActive) {
-                migrateFromStatus.done();
+                migrateFromStatusMaster.done();
             }
         }
 
@@ -651,7 +780,8 @@ namespace mongo {
                           const BSONObj* fullObj,
                           bool notInActiveChunk) {
         // TODO: include fullObj?
-        migrateFromStatus.logOp(opstr, ns, obj, patt, notInActiveChunk);
+        string nsStr = string(ns);
+        //migrateFromStatusMaster.logOp(opstr, nsStr, obj, patt, notInActiveChunk);
     }
 
     void aboutToDeleteForSharding( const StringData& ns,
@@ -659,10 +789,9 @@ namespace mongo {
                                    const NamespaceDetails* nsd,
                                    const DiskLoc& dl )
     {
-        // Note: namespace is currently unused since we only have a single migration per host,
-        // but will be needed for parallel migrations.
         if ( nsd->isCapped() ) return;
-        migrateFromStatus.aboutToDelete( db, dl );
+        string nsStr = ns.toString();
+        //migrateFromStatusMaster.aboutToDelete( nsStr, db, dl );
     }
 
     class TransferModsCommand : public ChunkCommandHelper {
@@ -676,7 +805,8 @@ namespace mongo {
             out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
         }
         bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-            return migrateFromStatus.transferMods( errmsg, result );
+            const string ns = cmdObj.firstElement().String();
+            return migrateFromStatusMaster.transferMods( ns , errmsg, result );
         }
     } transferModsCommand;
 
@@ -692,7 +822,8 @@ namespace mongo {
             out->push_back(Privilege(AuthorizationManager::SERVER_RESOURCE_NAME, actions));
         }
         bool run(const string& , BSONObj& cmdObj, int, string& errmsg, BSONObjBuilder& result, bool) {
-            return migrateFromStatus.clone( errmsg, result );
+            const string ns = cmdObj.firstElement().String();
+            return migrateFromStatusMaster.clone( ns, errmsg, result );
         }
     } initialCloneCommand;
 
@@ -849,7 +980,7 @@ namespace mongo {
 
             // 2.
 
-            if ( migrateFromStatus.isActive() ) {
+            if ( migrateFromStatusMaster.isActive() ) {
                 errmsg = "migration already in progress";
                 return false;
             }
@@ -892,6 +1023,9 @@ namespace mongo {
                                             Query(BSON(CollectionType::ns(ns))));
                     if ( col.hasField("linked") ) {
                         linkedNS = col["linked"].String();
+                    }
+                    else {
+                        linkedCols.push_back(ns);
                     }
                     x = conn->findOne(ChunkType::ConfigNS,
                                              Query(BSON(ChunkType::ns(linkedNS)))
@@ -1010,7 +1144,7 @@ namespace mongo {
                 return false;
             }
 
-            MigrateStatusHolder statusHolder( linkedNS , min , max , shardKeyPattern );
+            MigrateStatusHolder statusHolder( linkedCols, min , max , shardKeyPattern );
             if (statusHolder.isAnotherMigrationActive()) {
                 errmsg = "moveChunk is already in progress from this shard";
                 return false;
@@ -1018,7 +1152,7 @@ namespace mongo {
 
             {
                 // this gets a read lock, so we know we have a checkpoint for mods
-                if ( ! migrateFromStatus.storeCurrentLocs( maxChunkSize , errmsg , result ) )
+                if ( ! migrateFromStatusMaster.storeCurrentLocs( maxChunkSize , errmsg , result ) )
                     return false;
 
                 ScopedDbConnection connTo(toShard.getConnString());
@@ -1059,7 +1193,7 @@ namespace mongo {
             for (linkedCol = linkedCols.begin(); linkedCol != linkedCols.end(); ++linkedCol) {
                 string linkedColNS = *linkedCol;
                 // this gets a read lock, so we know we have a checkpoint for mods
-                if ( ! migrateFromStatus.storeCurrentLocs( maxChunkSize , errmsg , result ) )
+                if ( ! migrateFromStatusMaster.storeCurrentLocs( maxChunkSize , errmsg , result ) )
                     return false;
 
                 ScopedDbConnection connTo(toShard.getConnString());
@@ -1082,7 +1216,7 @@ namespace mongo {
                 connTo.done();
 
                 if ( ! ok ) {
-                    errmsg = "moveChunk failed to engage TO-shard in the data transfer: ";
+                    errmsg = str::stream() << "moveChunk failed to engage TO-shard in the data transfer of " << linkedColNS << ": ";
                     verify( res["errmsg"].type() );
                     errmsg += res["errmsg"].String();
                     result.append( "cause" , res );
@@ -1106,12 +1240,7 @@ namespace mongo {
                 bool ok;
                 res = BSONObj();
                 try {
-                    ok = conn->runCommand( "admin" ,
-                                            BSON(
-                                                "_recvChunkStatus" << 1 <<
-                                                "migrateId" << migrateId
-                                            ),
-                                            res );
+                    ok = conn->runCommand( "admin" , BSON("_recvChunkStatus" << 1), res );
                     log() << "Status:" << res << endl;
                     res = res.getOwned();
                 }
@@ -1123,7 +1252,7 @@ namespace mongo {
 
                 conn.done();
 
-                if ( res["ns"].str() != ns ||
+                if ( res["ns"].str() != linkedNS ||
                         res["from"].str() != fromShard.getConnString() ||
                         !res["min"].isABSONObj() ||
                         res["min"].Obj().woCompare(min) != 0 ||
@@ -1140,7 +1269,7 @@ namespace mongo {
                     return false;
                 }
 
-                LOG(0) << "moveChunk data transfer progress: " << res << " my mem used: " << migrateFromStatus.mbUsed() << migrateLog;
+                LOG(0) << "moveChunk data transfer progress: " << res << " my mem used: " << migrateFromStatusMaster.mbUsed() << migrateLog;
 
                 if ( ! ok || res["state"].String() == "fail" ) {
                     warning() << "moveChunk error transferring data caused migration abort: " << res << migrateLog;
@@ -1152,7 +1281,7 @@ namespace mongo {
                 if ( res["state"].String() == "steady" )
                     break;
 
-                if ( migrateFromStatus.mbUsed() > (500 * 1024 * 1024) ) {
+                if ( migrateFromStatusMaster.mbUsed() > (500 * 1024 * 1024) ) {
                     // this is too much memory for us to use for this
                     // so we're going to abort the migrate
                     ScopedDbConnection conn(toShard.getConnString());
@@ -1183,7 +1312,7 @@ namespace mongo {
             log() << "About to check if it is safe to enter critical section" << endl;
 
             // Ensure all cloned docs have actually been transferred
-            std::size_t locsRemaining = migrateFromStatus.cloneLocsRemaining();
+            std::size_t locsRemaining = migrateFromStatusMaster.cloneLocsRemaining();
             if ( locsRemaining != 0 ) {
 
                 errmsg =
@@ -1215,7 +1344,7 @@ namespace mongo {
                 // 5.a
                 // we're under the collection lock here, so no other migrate can change maxVersion
                 // or CollectionMetadata state
-                migrateFromStatus.setInCriticalSection( true );
+                migrateFromStatusMaster.setInCriticalSection( true );
                 ChunkVersion myVersion = maxVersion;
                 myVersion.incMajor();
 
@@ -1472,13 +1601,13 @@ namespace mongo {
                     }
                 }
 
-                migrateFromStatus.setInCriticalSection( false );
+                migrateFromStatusMaster.setInCriticalSection( false );
 
                 // 5.d
                 configServer.logChange( "moveChunk.commit" , ns , chunkInfo );
             }
 
-            migrateFromStatus.done();
+            migrateFromStatusMaster.done();
             timing.done(5);
 
             // 6.
@@ -1524,11 +1653,11 @@ namespace mongo {
     } moveChunkCmd;
 
     bool ShardingState::inCriticalMigrateSection() {
-        return migrateFromStatus.getInCriticalSection();
+        return migrateFromStatusMaster.getInCriticalSection();
     }
 
     bool ShardingState::waitTillNotInCriticalSection( int maxSecondsToWait ) {
-        return migrateFromStatus.waitTillNotInCriticalSection( maxSecondsToWait );
+        return migrateFromStatusMaster.waitTillNotInCriticalSection( maxSecondsToWait );
     }
 
     /* -----
@@ -1569,6 +1698,7 @@ namespace mongo {
             scoped_lock l(m_active); // reading and writing 'active'
 
             verify( ! active );
+            verify( ! ns.empty() );
             state = READY;
             errmsg = "";
 
@@ -1713,7 +1843,7 @@ namespace mongo {
 
                 while ( true ) {
                     BSONObj res;
-                    if ( ! conn->runCommand( "admin" , BSON( "_migrateClone" << 1 ) , res ) ) {  // gets array of objects to copy, in disk order
+                    if ( ! conn->runCommand( "admin" , BSON( "_migrateClone" << ns ) , res ) ) {  // gets array of objects to copy, in disk order
                         state = FAIL;
                         errmsg = "_migrateClone failed: ";
                         errmsg += res.toString();
@@ -1782,7 +1912,7 @@ namespace mongo {
                 state = CATCHUP;
                 while ( true ) {
                     BSONObj res;
-                    if ( ! conn->runCommand( "admin" , BSON( "_transferMods" << 1 ) , res ) ) {
+                    if ( ! conn->runCommand( "admin" , BSON( "_transferMods" << ns ) , res ) ) {
                         state = FAIL;
                         errmsg = "_transferMods failed: ";
                         errmsg += res.toString();
@@ -2046,13 +2176,13 @@ namespace mongo {
         mutable mongo::mutex m_active;
         bool active;
 
-        const string& ns;
+        string ns;
         const string& from;
 
         const BSONObj& min;
         const BSONObj& max;
         const BSONObj& shardKeyPattern;
-        const OID& epoch;
+        OID epoch;
 
         long long numCloned;
         long long clonedBytes;
@@ -2062,7 +2192,7 @@ namespace mongo {
 
         int replSetMajorityCount;
 
-        enum State { READY , CLONE , CATCHUP , STEADY , COMMIT_START , DONE , FAIL , ABORT } state;
+        enum State { READY = 0 , CLONE , CATCHUP , STEADY , COMMIT_START , DONE , FAIL , ABORT } state;
         string errmsg;
 
     };
@@ -2087,14 +2217,8 @@ namespace mongo {
             ms.clear();
         }
 
-        string stateString() {
-            MigrateStatus::State minState = MigrateStatus::DONE;
-            vector<MigrateStatus*>::const_iterator status;
-            for ( status = ms.begin(); status != ms.end(); ++status ) {
-                if ( (*status)->state < minState )
-                    minState = (*status)->state;
-            }
-            switch ( minState ) {
+        string stateString(MigrateStatus::State state) {
+            switch ( state ) {
             case MigrateStatus::READY: return "ready";
             case MigrateStatus::CLONE: return "clone";
             case MigrateStatus::CATCHUP: return "catchup";
@@ -2117,22 +2241,31 @@ namespace mongo {
             b.append( "max" , max );
             b.append( "shardKeyPattern" , shardKeyPattern );
 
-            b.append( "state" , stateString() );
-            //if ( state == FAIL )
-            //    b.append( "errmsg" , errmsg );
-            {
-                long long numCloned = 0;
-                long long clonedBytes = 0;
-                long long numCatchup = 0;
-                long long numSteady = 0;
-                vector<MigrateStatus*>::const_iterator status;
-                for ( status = ms.begin(); status != ms.end(); ++status ) {
-                    MigrateStatus* s = *status;
-                    numCloned += s->numCloned;
-                    clonedBytes += s->clonedBytes;
-                    numCatchup += s->numCatchup;
-                    numSteady += s->numSteady;
+            MigrateStatus::State state = MigrateStatus::DONE;
+            long long numCloned = 0;
+            long long clonedBytes = 0;
+            long long numCatchup = 0;
+            long long numSteady = 0;
+            log() << "length: " << ms.size() << endl;
+            vector<MigrateStatus*>::const_iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                MigrateStatus* s = *status;
+                numCloned += s->numCloned;
+                clonedBytes += s->clonedBytes;
+                numCatchup += s->numCatchup;
+                numSteady += s->numSteady;
+                log() << "migrate state " << stateString(s->state) << ":" << (int)s->state << endl;
+                if ( s->state < state || s->state >= MigrateStatus::FAIL ) {
+                    state = s->state;
+                    if ( state == MigrateStatus::FAIL ) {
+                        b.append( "errmsg" , s->errmsg );
+                        break;
+                    }
                 }
+            }
+
+            b.append( "state" , stateString(state) );
+            {
                 BSONObjBuilder bb( b.subobjStart( "counts" ) );
                 bb.append( "cloned" , numCloned );
                 bb.append( "clonedBytes" , clonedBytes );
@@ -2172,7 +2305,7 @@ namespace mongo {
         OID epoch;
         bool secondaryThrottle;
 
-        MigrateStatus* prepareNewMigration(const string& ns) {
+        MigrateStatus* prepareNewMigration(const string& ns, const OID& epoch) {
             MigrateStatus* status = new MigrateStatus(
                 ns,
                 from,
@@ -2182,6 +2315,7 @@ namespace mongo {
                 epoch
             );
             ms.push_back(status);
+            log() << "length: " << ms.size() << endl;
             return status;
         }
 
@@ -2320,15 +2454,34 @@ namespace mongo {
 
             const string ns = cmdObj.firstElement().String();
             OID migrateId = cmdObj["migrateId"].OID();
-            log() << "migrateId " << migrateId << endl;
+            log() << "migrateId " << migrateId << " for " << ns << endl;
             // Active state of TO-side migrations (MigrateStatus) is serialized by distributed
             // collection lock.
-            if ( migrateStatusMaster.getActive(migrateId) ) {
+            if ( ! migrateStatusMaster.getActive(migrateId) ) {
                 errmsg = "migrate already in progress";
                 return false;
             }
+
+            // Refresh our collection manager from the config server, we need a collection manager
+            // to start registering pending chunks.
+            // We force the remote refresh here to make the behavior consistent and predictable,
+            // generally we'd refresh anyway, and to be paranoid.
+            ChunkVersion currentVersion;
+            Status status = shardingState.refreshMetadataNow( ns, &currentVersion );
+
+            if ( !status.isOK() ) {
+                errmsg = str::stream() << "cannot start recv'ing chunk for ns: " << ns
+                                       << "migrateId: " << migrateId
+                                       << causedBy( status.reason() );
+
+                warning() << errmsg << endl;
+                return false;
+            }
+
             // Start thread to migrate chunk
-            MigrateStatus* migrateStatus = migrateStatusMaster.prepareNewMigration(ns);
+            MigrateStatus* migrateStatus = migrateStatusMaster.prepareNewMigration(ns, currentVersion.epoch());
+
+            migrateStatus->prepare();
 
             boost::thread m( migrateThread,  migrateStatus);
 

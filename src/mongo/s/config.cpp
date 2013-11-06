@@ -121,7 +121,8 @@ namespace mongo {
         val.append(CollectionType::ns(), ns);
         val.appendDate(CollectionType::DEPRECATED_lastmod(), time(0));
         val.appendBool(CollectionType::dropped(), _dropped);
-        val.append(CollectionType::linked(), _linked);
+        if ( ! _linked.empty() )
+            val.append(CollectionType::linked(), _linked);
 
         if ( _cm )
             _cm->getInfo( val );

@@ -651,11 +651,11 @@ namespace mongo {
         }
 
         bool transferMods( const string& ns,  string& errmsg , BSONObjBuilder& result ) {
-            return ms[ns]->transferMods(errmsg, result);
+            return _getMS(ns)->transferMods(errmsg, result);
         }
 
         bool clone( const string& ns, string& errmsg , BSONObjBuilder& result ) {
-            return ms[ns]->clone(errmsg, result);
+            return _getMS(ns)->clone(errmsg, result);
         }
 
         void done() {
@@ -727,15 +727,15 @@ namespace mongo {
                     const BSONObj& obj,
                     BSONObj * patt,
                     bool notInActiveChunk) {
-            log() << "logOp" << endl;
-            ms[ns]->logOp(opstr, ns, obj, patt, notInActiveChunk);
+            log() << "logOp: " << ns << endl;
+            _getMS(ns)->logOp(opstr, ns, obj, patt, notInActiveChunk);
         }
 
         void aboutToDelete( const string& ns,
                             const Database* db,
                             const DiskLoc& dl ) {
-            log() << "aboutToDelete" << endl;
-            ms[ns]->aboutToDelete( db, dl );
+            log() << "aboutToDelete: " << ns << endl;
+            _getMS(ns)->aboutToDelete( db, dl );
         }
 
         bool isActive() const { return _getActive(); }
@@ -747,6 +747,13 @@ namespace mongo {
         bool _active;
 
         map<string, MigrateFromStatus*> ms;
+        MigrateFromStatus genericMS;
+
+        MigrateFromStatus* _getMS(const string& ns) {
+            if (ms.count(ns))
+                return ms[ns];
+            return &genericMS;
+        }
 
         bool _getActive() const { scoped_lock l(_mutex); return _active; }
 
@@ -781,7 +788,7 @@ namespace mongo {
                           bool notInActiveChunk) {
         // TODO: include fullObj?
         string nsStr = string(ns);
-        //migrateFromStatusMaster.logOp(opstr, nsStr, obj, patt, notInActiveChunk);
+        migrateFromStatusMaster.logOp(opstr, nsStr, obj, patt, notInActiveChunk);
     }
 
     void aboutToDeleteForSharding( const StringData& ns,
@@ -791,7 +798,7 @@ namespace mongo {
     {
         if ( nsd->isCapped() ) return;
         string nsStr = ns.toString();
-        //migrateFromStatusMaster.aboutToDelete( nsStr, db, dl );
+        migrateFromStatusMaster.aboutToDelete( nsStr, db, dl );
     }
 
     class TransferModsCommand : public ChunkCommandHelper {
@@ -1982,7 +1989,7 @@ namespace mongo {
                     if ( state == COMMIT_START ) transferAfterCommit = true;
 
                     BSONObj res;
-                    if ( ! conn->runCommand( "admin" , BSON( "_transferMods" << 1 ) , res ) ) {
+                    if ( ! conn->runCommand( "admin" , BSON( "_transferMods" << ns ) , res ) ) {
                         log() << "_transferMods failed in STEADY state: " << res << migrateLog;
                         errmsg = res.toString();
                         state = FAIL;

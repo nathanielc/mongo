@@ -146,6 +146,8 @@ namespace mongo {
             return Status( ErrorCodes::FailedToParse, errMsg );
         }
 
+        log() << "Collection Info: " << collInfo << endl;
+
         if ( collInfo.isDroppedSet() && collInfo.getDropped() ) {
 
             errMsg = str::stream() << "could not load metadata, collection " << ns
@@ -162,6 +164,7 @@ namespace mongo {
             metadata->_keyPattern = collInfo.getKeyPattern();
             metadata->_shardVersion = ChunkVersion( 0, 0, collInfo.getEpoch() );
             metadata->_collVersion = ChunkVersion( 0, 0, collInfo.getEpoch() );
+            metadata->_linkedNS = collInfo.getLinked();
 
             return Status::OK();
         }
@@ -240,7 +243,8 @@ namespace mongo {
         // Exposes the new metadata's range map and version to the "differ," who
         // would ultimately be responsible of filling them up.
         SCMConfigDiffTracker differ( shard );
-        differ.attach( ns, metadata->_chunksMap, metadata->_collVersion, versionMap );
+        log() << "Metadata attach" << endl;
+        differ.attach( ns, metadata->_linkedNS, metadata->_chunksMap, metadata->_collVersion, versionMap );
 
         try {
 

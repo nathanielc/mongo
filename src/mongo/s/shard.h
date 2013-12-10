@@ -231,7 +231,8 @@ namespace mongo {
     };
 
     class ChunkManager;
-    typedef shared_ptr<const ChunkManager> ChunkManagerPtr;
+    //typedef shared_ptr<const ChunkManager> ChunkManagerPtr;
+    typedef shared_ptr<ChunkManager> ChunkManagerPtr;
 
     class ShardConnection : public AScopedConnection {
     public:

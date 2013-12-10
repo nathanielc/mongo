@@ -71,7 +71,8 @@ namespace mongo {
     Chunk::Chunk(const ChunkManager * manager, BSONObj from)
         : _manager(manager), _lastmod(0, OID()), _dataWritten(mkDataWritten())
     {
-        string ns = from.getStringField(ChunkType::ns().c_str());
+        string ns = _manager->getns();
+        string linkedNS = from.getStringField(ChunkType::ns().c_str());
         _shard.reset(from.getStringField(ChunkType::shard().c_str()));
 
         _lastmod = ChunkVersion::fromBSON(from[ChunkType::DEPRECATED_lastmod()]);
@@ -82,8 +83,9 @@ namespace mongo {
         
         _jumbo = from[ChunkType::jumbo()].trueValue();
 
+        log() << "ns: " << ns << " linkedNS: " << linkedNS << " manger linkedNS: " << _manager->getLinkedNS() << endl;
         uassert( 10170 ,  "Chunk needs a ns" , ! ns.empty() );
-        uassert( 13327 ,  "Chunk ns must match server ns" , ns == _manager->getns() );
+        uassert( 13327 ,  "Chunk ns must match server ns" , linkedNS == _manager->getLinkedNS() );
 
         uassert( 10171 ,  "Chunk needs a server" , _shard.ok() );
 
@@ -598,8 +600,9 @@ namespace mongo {
 
     AtomicUInt ChunkManager::NextSequenceNumber = 1;
 
-    ChunkManager::ChunkManager( const string& ns, const ShardKeyPattern& pattern , bool unique ) :
+    ChunkManager::ChunkManager( const string& ns, const string& linkedNS, const ShardKeyPattern& pattern , bool unique ) :
         _ns( ns ),
+        _linkedNS( linkedNS ),
         _key( pattern ),
         _unique( unique ),
         _chunkRanges(),
@@ -617,6 +620,9 @@ namespace mongo {
         _ns(collDoc[CollectionType::ns()].type() == String ?
                                                         collDoc[CollectionType::ns()].String() :
                                                         ""),
+        _linkedNS(collDoc[CollectionType::linked()].type() == String ?
+                                                        collDoc[CollectionType::linked()].String() :
+                                                        _ns),
         _key(collDoc[CollectionType::keyPattern()].type() == Object ?
                                                         collDoc[CollectionType::keyPattern()].Obj().getOwned() :
                                                         BSONObj()),
@@ -641,6 +647,7 @@ namespace mongo {
 
     ChunkManager::ChunkManager( ChunkManagerPtr oldManager ) :
         _ns( oldManager->getns() ),
+        _linkedNS( oldManager->getLinkedNS() ),
         _key( oldManager->getShardKey() ),
         _unique( oldManager->isUnique() ),
         _chunkRanges(),
@@ -795,7 +802,8 @@ namespace mongo {
 
         // Attach a diff tracker for the versioned chunk data
         CMConfigDiffTracker differ( this );
-        differ.attach( _ns, chunkMap, _version, shardVersions );
+        log() << "Chunk attach" << endl;
+        differ.attach( _ns, _linkedNS, chunkMap, _version, shardVersions );
 
         // Diff tracker should *always* find at least one chunk if collection exists
         int diffsApplied = differ.calculateConfigDiff( config, minorVersions );

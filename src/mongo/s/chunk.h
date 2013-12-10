@@ -51,7 +51,8 @@ namespace mongo {
     typedef map<BSONObj,ChunkPtr,BSONObjCmp> ChunkMap;
     typedef map<BSONObj,shared_ptr<ChunkRange>,BSONObjCmp> ChunkRangeMap;
 
-    typedef shared_ptr<const ChunkManager> ChunkManagerPtr;
+    //typedef shared_ptr<const ChunkManager> ChunkManagerPtr;
+    typedef shared_ptr<ChunkManager> ChunkManagerPtr;
 
     /**
        config.chunks
@@ -349,12 +350,14 @@ namespace mongo {
         ChunkManager( const BSONObj& collDoc );
 
         // Creates an empty chunk manager for the namespace
-        ChunkManager( const string& ns, const ShardKeyPattern& pattern, bool unique );
+        ChunkManager( const string& ns, const string& linkedNS, const ShardKeyPattern& pattern, bool unique );
 
         // Updates a chunk manager based on an older manager
         ChunkManager( ChunkManagerPtr oldManager );
 
         string getns() const { return _ns; }
+
+        string getLinkedNS() const { return _linkedNS; }
 
         const ShardKeyPattern& getShardKey() const {  return _key; }
 
@@ -439,6 +442,8 @@ namespace mongo {
 
         void getInfo( BSONObjBuilder& b ) const;
 
+        void setVersion( const ChunkVersion& version ) { _version = version; }
+
         /**
          * @param me - so i don't get deleted before i'm done
          */
@@ -466,6 +471,7 @@ namespace mongo {
 
         // All members should be const for thread-safety
         const string _ns;
+        const string _linkedNS;
         const ShardKeyPattern _key;
         const bool _unique;
 

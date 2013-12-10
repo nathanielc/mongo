@@ -79,7 +79,7 @@ namespace mongo {
             void shard( ChunkManager* cm );
             void unshard();
 
-			void link(CollectionInfo& other, string collection1);
+            void link(CollectionInfo& other, const string& linkedNS);
 
             bool isDirty() const { return _dirty; }
             bool wasDropped() const { return _dropped; }
@@ -89,6 +89,7 @@ namespace mongo {
             bool unique() const { return _unqiue; }
             BSONObj key() const { return _key; }
 
+            const string& getLinkedNS() const { return _linked; }
 
         private:
             BSONObj _key;
@@ -139,9 +140,9 @@ namespace mongo {
                                          vector<Shard>* initShards = 0 );
 
 
-		/* LinkeConnections manager */
-		bool linkCollections( const string& collection1, const string& collection2 );
-										  
+        /* LinkeConnections manager */
+        bool linkCollections( const string& collection1, const string& collection2 );
+
         /**
            @return true if there was sharding info to remove
          */

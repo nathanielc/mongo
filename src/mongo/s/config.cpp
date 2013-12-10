@@ -104,13 +104,23 @@ namespace mongo {
         _linked = "";
     }
 
-   void DBConfig::CollectionInfo::link(CollectionInfo& other, string collection1){
+   void DBConfig::CollectionInfo::link(CollectionInfo& other, const string& linkedNS){
             if ( _linked.empty() ){
                 _dirty = true;
-                _linked = collection1;
+                _linked = linkedNS;
             }
-            other._dirty = true;
-            other._linked = _linked;
+            if (other._linked != _linked) {
+                other._dirty = true;
+                other._linked = _linked;
+            }
+            ChunkManagerPtr other_cm = other.getCM();
+            if ( _cm && other_cm ) {
+                ChunkVersion version = _cm->getVersion();
+                if ( ! version.isEquivalentTo(other_cm->getVersion()) ) {
+                    other_cm->setVersion(version);
+                    other._dirty = true;
+                }
+            }
    }
 
 
@@ -128,6 +138,11 @@ namespace mongo {
             _cm->getInfo( val );
 
         conn->update(CollectionType::ConfigNS, key, val.obj(), true);
+        if (!_linked.empty() &&_linked != ns) {
+            //Remove chunk metadata because we are not authoritative
+            log() << "Removing chunk metadata for '" << ns << "' because it is not the master in the linking: " << _linked << endl;
+            conn->remove(ChunkType::ConfigNS, BSON( ChunkType::ns( ns ) ));
+        }
         string err = conn->getLastError();
         uassert( 13473 , (string)"failed to save collection (" + ns + "): " + err , err.size() == 0 );
 
@@ -192,9 +207,10 @@ namespace mongo {
             scoped_lock lk( _lock );
 
             CollectionInfo& ci1 = _collections[collection1];
-            uassert( 17116  , "collection1 not sharded" , ci1.isSharded() );
+            uassert( 17116 , "collection1 not sharded" , ci1.isSharded() );
             CollectionInfo& ci2 = _collections[collection2];
             uassert( 17117 , "collection2 not sharded" , ci2.isSharded() );
+            uassert( 17118 , "collection2 is already linked, it cannot be linked to another collection", ci2.getLinkedNS().empty() );
 
             log() << "link collections: " << collection1 << "and" << collection2  << endl;
 
@@ -219,7 +235,11 @@ namespace mongo {
 
             log() << "enable sharding on: " << ns << " with shard key: " << fieldsAndOrder << endl;
 
-            ChunkManager* cm = new ChunkManager( ns, fieldsAndOrder, unique );
+            string linkedNS = ns;
+            if ( !ci.getLinkedNS().empty() )
+                linkedNS = ci.getLinkedNS();
+
+            ChunkManager* cm = new ChunkManager( ns, linkedNS, fieldsAndOrder, unique );
             cm->createFirstChunks( configServer.getPrimary().getConnString(),
                                    getPrimary(), initPoints, initShards );
             ci.shard( cm );

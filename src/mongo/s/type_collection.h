@@ -234,6 +234,27 @@ namespace mongo {
                 return unique.getDefault();
             }
         }
+
+        void setLikned(const std::string& linked) {
+            _linked = linked;
+            _isLinkedSet = true;
+        }
+
+        void unsetLinked() { _isLinkedSet = false; }
+
+        bool isLinkedSet() const {
+            return _isLinkedSet;
+        }
+
+        // Calling getLinked() when the member is not set will return the ns of the collection
+        const std::string getLinked() const {
+            if (_isLinkedSet) {
+                return _linked;
+            } else {
+                return getNS();
+            }
+        }
+
         void setNoBalance(bool noBalance) {
             _noBalance = noBalance;
             _isNoBalanceSet = true;
@@ -287,6 +308,8 @@ namespace mongo {
         bool _isKeyPatternSet;
         bool _unique;     // (O)  mandatory if sharded, index is unique
         bool _isUniqueSet;
+        std::string _linked;  // (O) the ns of the linked collection
+        bool _isLinkedSet;
         Date_t _updatedAt;     // (M)  last updated time
         bool _isUpdatedAtSet;
         bool _noBalance;     // (O)  optional if sharded, disable balancing

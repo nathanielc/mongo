@@ -137,6 +137,9 @@ namespace mongo {
         // Store epoch now so it doesn't change when we change max
         OID currEpoch = _maxVersion->epoch();
 
+        log() << "maxVersion: " << *_maxVersion << endl;
+
+
         _validDiffs = 0;
         while( diffCursor.more() ){
 
@@ -155,6 +158,7 @@ namespace mongo {
 
             if( ! chunkVersion.isSet() || ! chunkVersion.hasCompatibleEpoch( currEpoch ) ){
 
+                log() << "isSet: " << chunkVersion.isSet() << " hasCompatibleEpoch: " << chunkVersion.hasCompatibleEpoch( currEpoch ) << endl;
                 warning() << "got invalid chunk version " << chunkVersion << " in document " << diffChunkDoc
                           << " when trying to load differing chunks at version "
                           << ChunkVersion( _maxVersion->toLong(), currEpoch ) << endl;
@@ -233,7 +237,8 @@ namespace mongo {
         if( rand() % 2 ) numStaleMinorClauses = maxMinorVersionClauses;
 #endif
 
-        queryB.append(ChunkType::ns(), _ns);
+        log() << "using linkedNS: " << _linkedNS << " to load chunks for " << _ns << endl;
+        queryB.append(ChunkType::ns(), _linkedNS);
 
         //
         // If we have only a few minor versions to refresh, we can be more selective in our query

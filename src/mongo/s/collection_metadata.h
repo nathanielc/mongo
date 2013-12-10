@@ -268,6 +268,10 @@ namespace mongo {
         // highest ChunkVersion for which this metadata's information is accurate
         ChunkVersion _shardVersion;
 
+
+        // The ns of the linked collection
+        string _linkedNS;
+
         // key pattern for chunks under this range
         BSONObj _keyPattern;
 

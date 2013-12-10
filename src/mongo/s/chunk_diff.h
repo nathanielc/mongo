@@ -76,11 +76,13 @@ namespace mongo {
          * TODO: Make a standard VersionedRange to encapsulate this info in both mongod and mongos?
          */
         void attach( const string& ns,
+                     const string& linkedNS,
                      RangeMap& currMap,
                      ChunkVersion& maxVersion,
                      map<ShardType, ChunkVersion>& maxShardVersions )
         {
             _ns = ns;
+            _linkedNS = linkedNS;
             _currMap = &currMap;
             _maxVersion = &maxVersion;
             _maxShardVersions = &maxShardVersions;
@@ -89,6 +91,7 @@ namespace mongo {
 
         void detach(){
             _ns = "";
+            _linkedNS = "";
             _currMap = NULL;
             _maxVersion = NULL;
             _maxShardVersions = NULL;
@@ -161,6 +164,7 @@ namespace mongo {
     private:
 
         string _ns;
+        string _linkedNS;
         RangeMap* _currMap;
         ChunkVersion* _maxVersion;
         map<ShardType, ChunkVersion>* _maxShardVersions;

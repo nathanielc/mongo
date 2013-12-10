@@ -105,6 +105,7 @@ namespace mongo {
         if (_isPrimarySet) builder.append(primary(), _primary);
         if (_isKeyPatternSet) builder.append(keyPattern(), _keyPattern);
         if (_isUniqueSet) builder.append(unique(), _unique);
+        if (_isLinkedSet) builder.append(linked(), _linked);
         if (_isUpdatedAtSet) builder.append(updatedAt(), _updatedAt);
         if (_isNoBalanceSet) builder.append(noBalance(), _noBalance);
 
@@ -142,6 +143,10 @@ namespace mongo {
         fieldState = FieldParser::extract(source, unique, &_unique, errMsg);
         if (fieldState == FieldParser::FIELD_INVALID) return false;
         _isUniqueSet = fieldState == FieldParser::FIELD_SET;
+
+        fieldState = FieldParser::extract(source, linked, &_linked, errMsg);
+        if (fieldState == FieldParser::FIELD_INVALID) return false;
+        _isLinkedSet = fieldState == FieldParser::FIELD_SET;
 
         fieldState = FieldParser::extract(source, updatedAt, &_updatedAt, errMsg);
         if (fieldState == FieldParser::FIELD_INVALID) return false;
@@ -201,6 +206,9 @@ namespace mongo {
         _unique = false;
         _isUniqueSet = false;
 
+        _linked.clear();
+        _isLinkedSet = false;
+
         _updatedAt = 0ULL;
         _isUpdatedAtSet = false;
 
@@ -229,6 +237,9 @@ namespace mongo {
 
         other->_unique = _unique;
         other->_isUniqueSet = _isUniqueSet;
+
+        other->_linked = _linked;
+        other->_isLinkedSet = _isLinkedSet;
 
         other->_updatedAt = _updatedAt;
         other->_isUpdatedAtSet = _isUpdatedAtSet;

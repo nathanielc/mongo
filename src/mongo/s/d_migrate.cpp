@@ -463,7 +463,7 @@ namespace mongo {
 
         bool clone( string& errmsg , BSONObjBuilder& result ) {
             if ( ! _getActive() ) {
-                errmsg = "not active";
+                errmsg = "not active, ns:" + _ns;
                 return false;
             }
 
@@ -632,11 +632,18 @@ namespace mongo {
             _inCriticalSection = false;
         }
 
+        ~MigrateFromStatusMaster() {
+            _clear();
+        }
+
         bool start( const vector<string>& linkedCols ,
                     const BSONObj& min ,
                     const BSONObj& max ,
                     const BSONObj& shardKeyPattern ) {
             bool success = true;
+            //Clear out any odl failed migrate statuses
+            _clear();
+
             vector<string>::const_iterator linkedColNS;
             for ( linkedColNS = linkedCols.begin(); linkedColNS != linkedCols.end(); ++linkedColNS ) {
                 MigrateFromStatus* status = new MigrateFromStatus();
@@ -663,6 +670,12 @@ namespace mongo {
             for ( status = ms.begin(); status != ms.end(); ++status ) {
                 status->second->done();
             }
+            {
+                scoped_lock l(_mutex);
+                _active = false;
+                _inCriticalSection = false;
+            }
+            _clear();
         }
 
         bool storeCurrentLocs( long long maxChunkSize , string& errmsg , BSONObjBuilder& result ) {
@@ -717,7 +730,7 @@ namespace mongo {
             bool success = true;
             map<string, MigrateFromStatus*>::const_iterator status;
             for ( status = ms.begin(); status != ms.end(); ++status ) {
-                success &= status->second->waitTillNotInCriticalSection( maxSecondsToWait );
+                success &= status->second->waitTillNotInCriticalSection( maxSecondsToWait / ms.size() + 1 );
             }
             return success;
         }
@@ -727,14 +740,12 @@ namespace mongo {
                     const BSONObj& obj,
                     BSONObj * patt,
                     bool notInActiveChunk) {
-            log() << "logOp: " << ns << endl;
             _getMS(ns)->logOp(opstr, ns, obj, patt, notInActiveChunk);
         }
 
         void aboutToDelete( const string& ns,
                             const Database* db,
                             const DiskLoc& dl ) {
-            log() << "aboutToDelete: " << ns << endl;
             _getMS(ns)->aboutToDelete( db, dl );
         }
 
@@ -756,6 +767,14 @@ namespace mongo {
         }
 
         bool _getActive() const { scoped_lock l(_mutex); return _active; }
+
+        void _clear() {
+            map<string, MigrateFromStatus*>::iterator status;
+            for ( status = ms.begin(); status != ms.end(); ++status ) {
+                delete status->second;
+            }
+            ms.clear();
+        }
 
     } migrateFromStatusMaster;
 
@@ -1689,7 +1708,8 @@ namespace mongo {
                 const BSONObj& _min,
                 const BSONObj& _max,
                 const BSONObj& _shardKeyPattern,
-                const OID& _epoch
+                const OID& _epoch,
+                bool _secondaryThrottle
             ) :
                 m_active("MigrateStatus"),
                 active(false),
@@ -1698,7 +1718,8 @@ namespace mongo {
                 min(_min),
                 max(_max),
                 shardKeyPattern(_shardKeyPattern),
-                epoch(_epoch)
+                epoch(_epoch),
+                secondaryThrottle(_secondaryThrottle)
             { }
 
         void prepare() {
@@ -2155,8 +2176,10 @@ namespace mongo {
 
 
         bool startCommit() {
-            if ( state != STEADY )
+            if ( state != STEADY ) {
+                log() << "startCommit failed!. Not in STEADY state. " << ns << endl;
                 return false;
+            }
             state = COMMIT_START;
 
             Timer t;
@@ -2213,15 +2236,11 @@ namespace mongo {
     public:
         MigrateStatusMaster() : m_active("MigrateStatusMaster"), activeId() { }
         ~MigrateStatusMaster() {
-            cleanUp();
+            _clear();
         }
 
-        void cleanUp() {
-            vector<MigrateStatus*>::iterator status;
-            for (status = ms.begin(); status != ms.end(); ++status) {
-                delete *status;
-            }
-            ms.clear();
+        void startNewMigration() {
+            _clear();
         }
 
         string stateString(MigrateStatus::State state) {
@@ -2261,7 +2280,7 @@ namespace mongo {
                 clonedBytes += s->clonedBytes;
                 numCatchup += s->numCatchup;
                 numSteady += s->numSteady;
-                log() << "migrate state " << stateString(s->state) << ":" << (int)s->state << endl;
+                log() << "migrate state ns: " << s->ns << " state " << stateString(s->state) << endl;
                 if ( s->state < state || s->state >= MigrateStatus::FAIL ) {
                     state = s->state;
                     if ( state == MigrateStatus::FAIL ) {
@@ -2296,12 +2315,12 @@ namespace mongo {
             for (status = ms.begin(); status != ms.end(); ++status) {
                 (*status)->abort();
             }
+            _clear();
         }
 
         bool getActive(const OID& migrateId) const { scoped_lock l(m_active); return activeId == migrateId; }
         bool isActive() const { scoped_lock l(m_active); return activeId.isSet(); }
         void setActive( const OID& migrateId ) { scoped_lock l(m_active); activeId = migrateId; }
-
 
         string linkedNS;
         string from;
@@ -2310,6 +2329,7 @@ namespace mongo {
         BSONObj max;
         BSONObj shardKeyPattern;
         OID epoch;
+
         bool secondaryThrottle;
 
         MigrateStatus* prepareNewMigration(const string& ns, const OID& epoch) {
@@ -2319,7 +2339,8 @@ namespace mongo {
                 min,
                 max,
                 shardKeyPattern,
-                epoch
+                epoch,
+                secondaryThrottle
             );
             ms.push_back(status);
             log() << "length: " << ms.size() << endl;
@@ -2335,6 +2356,16 @@ namespace mongo {
 
         mutable mongo::mutex m_active;
         OID activeId;
+
+
+        void _clear() {
+            vector<MigrateStatus*>::iterator status;
+            for (status = ms.begin(); status != ms.end(); ++status) {
+                delete *status;
+            }
+            ms.clear();
+        }
+
 
     } migrateStatusMaster;
 
@@ -2406,6 +2437,7 @@ namespace mongo {
                 return false;
             }
 
+            migrateStatusMaster.startNewMigration();
             migrateStatusMaster.linkedNS = ns;
             migrateStatusMaster.from = cmdObj["from"].String();
             migrateStatusMaster.min = min;

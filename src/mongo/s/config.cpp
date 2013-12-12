@@ -138,7 +138,7 @@ namespace mongo {
             _cm->getInfo( val );
 
         conn->update(CollectionType::ConfigNS, key, val.obj(), true);
-        if (!_linked.empty() &&_linked != ns) {
+        if (!_linked.empty() && _linked != ns) {
             //Remove chunk metadata because we are not authoritative
             log() << "Removing chunk metadata for '" << ns << "' because it is not the master in the linking: " << _linked << endl;
             conn->remove(ChunkType::ConfigNS, BSON( ChunkType::ns( ns ) ));
